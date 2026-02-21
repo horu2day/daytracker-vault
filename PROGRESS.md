@@ -2,8 +2,8 @@
 
 ## 마지막 업데이트
 
-- 날짜: 2026-02-22 00:12
-- 작업 내용: collector 에이전트 - Phase 3 VSCode 연동 전체 구현 완료
+- 날짜: 2026-02-22 15:30
+- 작업 내용: Phase 5-2 민감 정보 필터링 강화 및 Phase 5-3 Datasette 대시보드 구현 완료
 
 ---
 
@@ -49,6 +49,26 @@
   - `scripts/collectors/vscode_activity.py` - VSCode 로그 파일 파서 (Wakapi 미사용 시 폴백)
   - `scripts/watcher_daemon.py` - Thread 5 (vscode_poller) 추가, 시작 시 git hook 자동 설치
   - `config.example.yaml` - wakapi 섹션 상세 주석 추가
+- [x] **Phase 5-2 민감 정보 필터링 강화 구현 완료 (2026-02-22)**
+  - `scripts/processors/sensitive_filter.py` - SensitiveFilter 클래스 (14개 built-in 패턴 + config 패턴)
+  - `scripts/server.py` - mask_sensitive() → SensitiveFilter 사용으로 교체 (fallback 포함)
+  - `scripts/collectors/claude_code.py` - sync_to_db() 전 _mask() 적용, 이중 래핑 버그 수정
+- [x] **Phase 5-3 Datasette 대시보드 구현 완료 (2026-02-22)**
+  - `scripts/datasette_setup.py` - is_installed(), install(), write_metadata(), serve(), run() CLI
+  - `datasette_metadata.json` - 4개 테이블 설명 + 4개 커스텀 쿼리 (오늘 요약, AI세션, 파일변경, 일별 활동량)
+  - `requirements.txt` - datasette>=0.64 추가
+  - `scripts/watcher_daemon.py` - 시작 메시지에 Dashboard 안내 추가
+- [x] **Phase 5-1 주간/월간 요약 노트 자동 생성 구현 완료 (2026-02-22)**
+  - `scripts/obsidian/weekly_note.py` - ISO 주 기반 Weekly Note 생성기 (Monday-based, `--week YYYY-Www`, `--dry-run`)
+  - `scripts/obsidian/monthly_note.py` - Monthly Note 생성기 (`--month YYYY-MM`, `--dry-run`, Dataview 블록 포함)
+  - `scripts/daily_summary.py` - `--weekly` / `--monthly` 강제 생성 플래그 추가, 6단계 파이프라인으로 확장
+    - Step 5: 월요일 자동 또는 `--weekly` 플래그 시 Weekly Note 생성
+    - Step 6: 매월 1일 자동 또는 `--monthly` 플래그 시 Monthly Note 생성
+  - `scripts/watcher_daemon.py` - `_start_scheduler()` 확장
+    - 매주 월요일 00:05 → `weekly_note.py` 실행
+    - 매월 1일 00:10 → `monthly_note.py` 실행 (매일 00:10 체크, day==1일 때만 실행)
+  - `vault-templates/Templates/weekly.md` - Templater 기반 주간 노트 수동 생성 템플릿
+  - `vault-templates/Templates/monthly.md` - Templater 기반 월간 노트 수동 생성 템플릿
 
 ---
 
@@ -58,11 +78,13 @@
 
 ---
 
-## 다음 할 일 (Phase 4)
+## 다음 할 일
 
-- [ ] 로컬 수신 서버 (`scripts/server.py`) - FastAPI/Flask, 포트 7331
-- [ ] 브라우저 확장 프로그램 (`browser-extension/`) - Manifest V3, ChatGPT/Gemini/Claude.ai
-- [ ] ChatGPT 내보내기 파서 (`scripts/collectors/chatgpt_export.py`)
+- [ ] Phase 4: 로컬 수신 서버 (`scripts/server.py`) - FastAPI/Flask, 포트 7331
+- [ ] Phase 4: 브라우저 확장 프로그램 (`browser-extension/`) - Manifest V3, ChatGPT/Gemini/Claude.ai
+- [ ] Phase 4: ChatGPT 내보내기 파서 (`scripts/collectors/chatgpt_export.py`)
+- [ ] Phase 5: Project Note 자동 생성/업데이트 강화 (`scripts/obsidian/project_note.py`)
+- [ ] Phase 6: Morning Briefing Agent, Context Agent 구현
 
 ---
 
@@ -114,6 +136,7 @@
 ### Phase 1 통합 파이프라인 테스트 결과 (2026-02-21)
 
 `python scripts/daily_summary.py --date 2026-02-21` 전체 통과:
+
 - Step 1 Claude Code sync: 22개 세션 파싱 (daytracker-vault, 20:56~23:31 KST)
 - Step 2 AI Session notes: 22개 노트 생성 (`test-vault/AI-Sessions/`)
 - Step 3 Daily Note: `test-vault/Daily/2026-02-21.md` 생성
@@ -123,6 +146,7 @@
 ### Phase 2 수집 데몬 테스트 결과 (2026-02-21)
 
 모든 테스트 통과:
+
 - **file_watcher**: `start_watching(dry_run=True)` → 10초 실행 후 정상 종료. `C:\MYCLAUDE_PROJECT` watch 확인
 - **window_poller**: `start_polling(interval=5, dry_run=True)` → 7초 실행, 활성 창(Brave/YouTube) 감지 성공
 - **browser_history**: `--dry-run --hours 1000` → 14개 항목 발견 (2026-01-11 Chrome 기록), `--hours 24`는 최신 기록 없어 정상적으로 0건 반환
@@ -157,6 +181,67 @@
 - **install_git_hook.py**: `HOOK_BEGIN_MARKER` / `HOOK_END_MARKER` 로 멱등성 보장. 기존 hook에 append, 새 hook이면 shebang(`#!/bin/sh`) 포함 생성. `--uninstall` 시 마커 블록 제거
 - **vscode_activity.py**: `%APPDATA%/Code/logs/` 디렉토리 탐색. `file://` URI 패턴 정규식으로 워크스페이스 경로 추출. watch_roots 기준 프로젝트 매핑. 50개 최근 로그 파일 제한
 - **watcher_daemon.py 업데이트**: `_install_git_hooks()` 시작 시 1회 실행 (dry-run 시 skip). `_start_vscode_thread()` → Wakapi enabled 시 15분 간격 폴링, disabled 시 1시간 간격으로 로그 폴백. 상태 출력에 `git_commits`, `vscode` 카운터 추가
+
+### Phase 5-2 테스트 결과 (2026-02-22)
+
+모든 테스트 통과:
+
+- **SensitiveFilter.mask()**: `sk-abc123def456ghi789jkl012mno345` → `[OPENAI_KEY]`, `password=secret123` → `password=[REDACTED]`
+- **내장 패턴 14종 전체 확인**: OPENAI_KEY, GOOGLE_KEY, GITHUB_PAT, GITHUB_OAUTH, SLACK_BOT, SLACK_USER, AWS_ACCESS_KEY, PASSWORD, PASSWD, SECRET, TOKEN, BEARER_TOKEN, PRIVATE_KEY, DB_CONNECTION_STRING 모두 정상
+- **scan_text()**: AWS key / Bearer token 감지 및 preview 20자 제한 정상 동작
+- **scan_db()**: worklog.db 스캔 → 21개 잠재적 매칭 발견 (config의 짧은 패턴 `sk-[a-zA-Z0-9]+`이 `sk-id`, `sk-notification` false positive 포함 - 정상 동작)
+- **clean_db(dry_run=True)**: 6개 행 마스킹 예정 출력, DB 미변경 확인
+- **server.py 연동**: `_sensitive_filter` = SensitiveFilter 인스턴스 확인, `mask_sensitive('token=...')` → `token=[REDACTED]`
+- **claude_code.py 연동**: `_mask()` 정상 동작, double-wrap 버그 추가 수정 (`_daytracker_wrapped` 가드 적용)
+
+### Phase 5-2 구현 세부사항
+
+- **SensitiveFilter**: `__init__`에서 BUILTIN_PATTERNS 전체 pre-compile. 각 패턴은 `(regex, replacement, label)` 튜플. `mask()` 반환 타입 `tuple[str, list[str]]`
+- **scan_text()**: 실제 값 노출 없이 match 앞 20자만 preview로 반환 (감사 목적)
+- **scan_db() / clean_db()**: PRAGMA table_info로 컬럼 존재 여부 먼저 확인 후 처리 (스키마 변형 대응)
+- **config 패턴 연동**: `Config().sensitive_patterns` → `extra_patterns` 인자로 전달, label은 `CUSTOM:{pattern[:40]}`
+- **double-wrap 버그 수정**: `claude_code.py`의 Windows stdout 래핑에 `_daytracker_wrapped` 가드 추가 (import 시 crash 방지)
+
+### Phase 5-3 테스트 결과 (2026-02-22)
+
+모든 테스트 통과:
+
+- **is_installed()**: datasette 0.65.2 설치 확인
+- **install()**: `pip install datasette` 정상 완료 (이미 설치 시 skip 메시지 출력)
+- **write_metadata()**: `datasette_metadata.json` 생성, 4개 테이블 설명 + 4개 쿼리 포함 확인
+- **metadata 내용**: title='DayTracker Dashboard', queries=['오늘_요약', '프로젝트별_AI세션', '최근_파일변경', '일별_활동량']
+- **datasette_setup.py --write-metadata**: CLI 정상 동작
+- **datasette_setup.py --install**: 이미 설치 시 skip 메시지 출력 정상
+
+### Phase 5-3 구현 세부사항
+
+- **is_installed()**: `importlib.util.find_spec('datasette')` 사용 (subprocess 없이 빠른 체크)
+- **serve()**: `python -m datasette {db_path} --metadata {metadata} --port {port} --host 127.0.0.1` subprocess 실행, blocking
+- **write_metadata()**: Python dict를 `json.dump`로 직렬화, ensure_ascii=False (한글 유지)
+- **watcher_daemon.py**: 시작 시 `Dashboard: python scripts/datasette_setup.py --serve` 출력 추가
+- **requirements.txt**: `datasette>=0.64` 추가
+
+### Phase 5-1 테스트 결과 (2026-02-22)
+
+모든 테스트 통과:
+
+- **weekly_note --dry-run**: 2026-W08 → 2개 프로젝트, AI 31건, 파일 427건 출력 성공
+- **weekly_note 실제 생성**: `C:/Obsidian/DayTracker/Weekly/2026-W08.md` 생성 성공
+- **weekly_note 멱등성**: 재실행 시 `Updating existing note` 경로로 정상 업데이트
+- **weekly_note --week 2025-W52**: 데이터 없는 주 → 0건 정상 출력
+- **monthly_note --dry-run**: 2026-02 → 통계(작업일 2일, AI 31건, 파일 430건), 5개 주간 요약, Dataview 블록 출력 성공
+- **monthly_note 실제 생성**: `C:/Obsidian/DayTracker/Monthly/2026-02.md` 생성 성공
+- **monthly_note 멱등성**: 재실행 시 `Updating existing note` 경로로 정상 업데이트
+- **daily_summary --weekly --monthly --dry-run**: 6단계 파이프라인 전체 통과 (`All steps completed successfully`)
+- **daily_summary --weekly 단독**: 5단계 (Step 5/5 weekly), monthly 스킵 메시지 출력 정상
+- **daily_summary (no flags, non-Monday, non-1st)**: 4단계만 실행, 스킵 메시지 출력 정상
+
+### Phase 5-1 구현 세부사항
+
+- **weekly_note.py**: `_parse_week_str("YYYY-Www")` → `date.fromisocalendar()` 사용 (Python 3.9+). 기존 파일 있으면 frontmatter 재작성 + 3개 섹션 `update_section()` 업데이트. 없으면 `write_note()` 신규 생성.
+- **monthly_note.py**: `calendar.monthrange()` 로 월말 일수 계산. `_iso_weeks_in_month()` → 월 내 ISO 주 목록 중복 없이 생성. Dataview 블록은 `date("YYYY-MM-01")` ~ `date("YYYY-MM-DD")` 형식으로 동적 생성.
+- **daily_summary.py**: `run_pipeline()` 함수에 `run_weekly`, `run_monthly` 파라미터 추가. `target_date.weekday() == 0` (월요일) → 자동 weekly 실행. `target_date.day == 1` (1일) → 자동 monthly 실행. 총 단계 수를 동적 계산하여 `[Step N/M]` 표시.
+- **watcher_daemon.py**: `_run_subprocess()` 헬퍼 함수로 subprocess 실행 로직 통합. `schedule.every().monday.at("00:05")` → weekly_note.py 직접 실행. `schedule.every().day.at("00:10")` → `datetime.now().day == 1` 체크 후 monthly_note.py 실행.
 
 ## 막힌 부분 / 이슈
 

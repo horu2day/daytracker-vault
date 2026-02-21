@@ -35,10 +35,16 @@ try:
     from config import Config
     _cfg = Config()
     DB_PATH = _cfg.get_db_path()
-    SENSITIVE_PATTERNS = _cfg.sensitive_patterns
+    _extra_patterns = _cfg.sensitive_patterns
 except Exception:
     DB_PATH = str(_PROJECT_ROOT / "data" / "worklog.db")
-    SENSITIVE_PATTERNS = ["sk-[a-zA-Z0-9]+", "AIza[a-zA-Z0-9]+", "password\\s*=\\s*\\S+"]
+    _extra_patterns = []
+
+try:
+    from processors.sensitive_filter import SensitiveFilter as _SF
+    _sensitive_filter = _SF(extra_patterns=_extra_patterns)
+except Exception:
+    _sensitive_filter = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 _DRY_RUN = False
@@ -56,9 +62,18 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def mask_sensitive(text: str) -> str:
+    """Apply SensitiveFilter (or simple regex fallback) to mask secrets."""
     if not text:
         return text
-    for pattern in SENSITIVE_PATTERNS:
+    if _sensitive_filter is not None:
+        masked, _ = _sensitive_filter.mask(text)
+        return masked
+    # Fallback: simple built-in patterns if SensitiveFilter import failed
+    for pattern in (
+        r'sk-[a-zA-Z0-9]{20,}',
+        r'AIza[a-zA-Z0-9\-_]{35}',
+        r'(?i)password\s*[=:]\s*\S+',
+    ):
         text = re.sub(pattern, "[REDACTED]", text, flags=re.IGNORECASE)
     return text
 

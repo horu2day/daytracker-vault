@@ -19,10 +19,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Windows 콘솔 UTF-8 출력 보장
+# Windows 콘솔 UTF-8 출력 보장 (guard against double-wrapping when imported)
 if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stdout, "buffer") and not getattr(sys.stdout, "_daytracker_wrapped", False):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stdout._daytracker_wrapped = True  # type: ignore[attr-defined]
+    if hasattr(sys.stderr, "buffer") and not getattr(sys.stderr, "_daytracker_wrapped", False):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        sys.stderr._daytracker_wrapped = True  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
 # Bootstrap: make sure the project root and scripts/ dir are importable
@@ -44,9 +48,30 @@ try:
     _cfg = Config()
     CLAUDE_HISTORY_PATH = _cfg.get_claude_history_path()
     DB_PATH = _cfg.get_db_path()
+    _extra_sensitive_patterns = _cfg.sensitive_patterns
 except Exception:
     CLAUDE_HISTORY_PATH = os.path.expanduser("~/.claude/projects")
     DB_PATH = str(_PROJECT_ROOT / "data" / "worklog.db")
+    _extra_sensitive_patterns = []
+
+# Sensitive filter (applied before saving to DB)
+try:
+    from processors.sensitive_filter import SensitiveFilter as _SF  # type: ignore
+    _sensitive_filter = _SF(extra_patterns=_extra_sensitive_patterns)
+except Exception:
+    _sensitive_filter = None  # type: ignore[assignment]
+
+
+def _mask(text: str) -> str:
+    """Mask sensitive data in *text* using SensitiveFilter (or identity if unavailable)."""
+    if not text:
+        return text
+    if _sensitive_filter is not None:
+        masked, found = _sensitive_filter.mask(text)
+        if found:
+            log.debug("Masked sensitive patterns: %s", ", ".join(found))
+        return masked
+    return text
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -251,7 +276,11 @@ def sync_to_db(sessions: list, db_path: str) -> int:
         with conn:
             conn.execute(_CREATE_TABLE_SQL)
             for record in sessions:
-                cur = conn.execute(_UPSERT_SQL, record)
+                # Mask sensitive data before persisting
+                sanitised = dict(record)
+                sanitised["prompt_text"] = _mask(record.get("prompt_text", ""))
+                sanitised["response_text"] = _mask(record.get("response_text", ""))
+                cur = conn.execute(_UPSERT_SQL, sanitised)
                 inserted += cur.rowcount
     except sqlite3.Error as exc:
         log.error("Database error: %s", exc)

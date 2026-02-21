@@ -1,0 +1,42 @@
+{
+  "title": "DayTracker Dashboard",
+  "description": "\uac1c\uc778 \uc791\uc5c5 \uae30\ub85d \ub370\uc774\ud130\ubca0\uc774\uc2a4",
+  "databases": {
+    "worklog": {
+      "tables": {
+        "ai_prompts": {
+          "title": "AI \ud504\ub86c\ud504\ud2b8 \uae30\ub85d",
+          "description": "Claude Code, ChatGPT, Gemini \ub300\ud654 \uae30\ub85d"
+        },
+        "activity_log": {
+          "title": "\ud65c\ub3d9 \ub85c\uadf8",
+          "description": "\ud30c\uc77c \ubcc0\uacbd, \ucc3d \ud65c\ub3d9, \ube0c\ub77c\uc6b0\uc800 \ubc29\ubb38 \uae30\ub85d"
+        },
+        "file_events": {
+          "title": "\ud30c\uc77c \ubcc0\uacbd \uc774\ubca4\ud2b8"
+        },
+        "projects": {
+          "title": "\ud504\ub85c\uc81d\ud2b8 \ubaa9\ub85d"
+        }
+      }
+    }
+  },
+  "queries": {
+    "\uc624\ub298_\uc694\uc57d": {
+      "sql": "SELECT date(timestamp,'localtime') as date, event_type, COUNT(*) as count FROM activity_log WHERE date(timestamp,'localtime') = date('now','localtime') GROUP BY date, event_type ORDER BY count DESC",
+      "title": "\uc624\ub298 \ud65c\ub3d9 \uc694\uc57d"
+    },
+    "\ud504\ub85c\uc81d\ud2b8\ubcc4_AI\uc138\uc158": {
+      "sql": "SELECT project, COUNT(*) as sessions, MAX(timestamp) as last_activity FROM ai_prompts GROUP BY project ORDER BY sessions DESC",
+      "title": "\ud504\ub85c\uc81d\ud2b8\ubcc4 AI \uc138\uc158"
+    },
+    "\ucd5c\uadfc_\ud30c\uc77c\ubcc0\uacbd": {
+      "sql": "SELECT datetime(timestamp,'localtime') as time, file_path, event_type FROM file_events ORDER BY timestamp DESC LIMIT 50",
+      "title": "\ucd5c\uadfc \ud30c\uc77c \ubcc0\uacbd 50\uac74"
+    },
+    "\uc77c\ubcc4_\ud65c\ub3d9\ub7c9": {
+      "sql": "SELECT date(timestamp,'localtime') as date, COUNT(*) as events FROM activity_log GROUP BY date ORDER BY date DESC LIMIT 30",
+      "title": "\ucd5c\uadfc 30\uc77c \uc77c\ubcc4 \ud65c\ub3d9\ub7c9"
+    }
+  }
+}

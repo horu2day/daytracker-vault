@@ -34,10 +34,10 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 if sys.platform == "win32":
     if hasattr(sys.stdout, "buffer") and not getattr(sys.stdout, "_daytracker_wrapped", False):
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
         sys.stdout._daytracker_wrapped = True  # type: ignore[attr-defined]
     if hasattr(sys.stderr, "buffer") and not getattr(sys.stderr, "_daytracker_wrapped", False):
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
         sys.stderr._daytracker_wrapped = True  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,7 @@ class DayTrackerDaemon:
         self._start_scheduler()
 
         print("[DayTracker] All collectors started. Press Ctrl+C to stop.")
+        print("[DayTracker] Dashboard: python scripts/datasette_setup.py --serve")
 
         # Main loop: status reporting
         try:
@@ -347,7 +348,7 @@ class DayTrackerDaemon:
     # ------------------------------------------------------------------
 
     def _start_scheduler(self) -> None:
-        """Start the schedule thread for daily summary."""
+        """Start the schedule thread for daily, weekly, and monthly summaries."""
         if not SCHEDULE_AVAILABLE:
             print(
                 "[DayTracker] WARNING: schedule not installed; daily summary auto-run disabled. "
@@ -361,45 +362,90 @@ class DayTrackerDaemon:
         dry_run = self.dry_run
         project_root = PROJECT_ROOT
 
-        def _run_daily_summary() -> None:
-            """Run the daily summary pipeline."""
-            print(f"[DayTracker] Running daily summary ({summary_time})...")
+        def _run_subprocess(cmd: list, label: str) -> None:
+            """Run a subprocess and log the result."""
+            import subprocess
             try:
-                summary_script = project_root / "scripts" / "daily_summary.py"
-                if summary_script.exists():
-                    import subprocess
-                    cmd = [sys.executable, str(summary_script)]
-                    if dry_run:
-                        cmd.append("--dry-run")
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        cwd=str(project_root),
-                    )
-                    if result.returncode == 0:
-                        print("[DayTracker] Daily summary completed successfully.")
-                    else:
-                        print(
-                            f"[DayTracker] Daily summary failed (rc={result.returncode}):\n"
-                            + result.stderr[-500:],
-                            file=sys.stderr,
-                        )
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=str(project_root),
+                )
+                if result.returncode == 0:
+                    print(f"[DayTracker] {label} completed successfully.")
                 else:
                     print(
-                        f"[DayTracker] WARNING: daily_summary.py not found at {summary_script}",
+                        f"[DayTracker] {label} failed (rc={result.returncode}):\n"
+                        + result.stderr[-500:],
                         file=sys.stderr,
                     )
             except Exception as exc:  # noqa: BLE001
                 print(
-                    f"[DayTracker] ERROR running daily summary: {exc}",
+                    f"[DayTracker] ERROR running {label}: {exc}",
                     file=sys.stderr,
                 )
 
+        def _run_daily_summary() -> None:
+            """Run the daily summary pipeline."""
+            print(f"[DayTracker] Running daily summary ({summary_time})...")
+            summary_script = project_root / "scripts" / "daily_summary.py"
+            if not summary_script.exists():
+                print(
+                    f"[DayTracker] WARNING: daily_summary.py not found at {summary_script}",
+                    file=sys.stderr,
+                )
+                return
+            cmd = [sys.executable, str(summary_script)]
+            if dry_run:
+                cmd.append("--dry-run")
+            _run_subprocess(cmd, "daily summary")
+
+        def _run_weekly_note() -> None:
+            """Run the weekly note generator."""
+            print("[DayTracker] Running weekly note (Monday schedule)...")
+            weekly_script = project_root / "scripts" / "obsidian" / "weekly_note.py"
+            if not weekly_script.exists():
+                print(
+                    f"[DayTracker] WARNING: weekly_note.py not found at {weekly_script}",
+                    file=sys.stderr,
+                )
+                return
+            cmd = [sys.executable, str(weekly_script)]
+            if dry_run:
+                cmd.append("--dry-run")
+            _run_subprocess(cmd, "weekly note")
+
+        def _run_monthly_note() -> None:
+            """Run the monthly note generator (only on the 1st of the month)."""
+            if datetime.now().day != 1:
+                return
+            print("[DayTracker] Running monthly note (1st of month schedule)...")
+            monthly_script = project_root / "scripts" / "obsidian" / "monthly_note.py"
+            if not monthly_script.exists():
+                print(
+                    f"[DayTracker] WARNING: monthly_note.py not found at {monthly_script}",
+                    file=sys.stderr,
+                )
+                return
+            cmd = [sys.executable, str(monthly_script)]
+            if dry_run:
+                cmd.append("--dry-run")
+            _run_subprocess(cmd, "monthly note")
+
+        # Daily summary at configured time every day
         schedule.every().day.at(summary_time).do(_run_daily_summary)
         print(f"[DayTracker] Daily summary scheduled at {summary_time}.")
+
+        # Weekly note every Monday at 00:05
+        schedule.every().monday.at("00:05").do(_run_weekly_note)
+        print("[DayTracker] Weekly note scheduled every Monday at 00:05.")
+
+        # Monthly note check every day at 00:10 (only executes on the 1st)
+        schedule.every().day.at("00:10").do(_run_monthly_note)
+        print("[DayTracker] Monthly note scheduled for the 1st of each month at 00:10.")
 
         def _schedule_loop() -> None:
             while not stop.is_set():

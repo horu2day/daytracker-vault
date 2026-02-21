@@ -6,10 +6,15 @@ Orchestrates the full pipeline:
     2. Create AI Session notes   (scripts/obsidian/ai_session.py)
     3. Create/update Daily Note  (scripts/obsidian/daily_note.py)
     4. Update Project Notes      (scripts/obsidian/project_note.py)
-    5. Print summary of what was created/updated
+    5. Update Weekly Note        (scripts/obsidian/weekly_note.py)
+       - Runs automatically if today is Monday, or when --weekly flag is set.
+    6. Update Monthly Note       (scripts/obsidian/monthly_note.py)
+       - Runs automatically if today is 1st of month, or when --monthly flag is set.
 
 Usage:
     python scripts/daily_summary.py [--date YYYY-MM-DD] [--dry-run]
+    python scripts/daily_summary.py --weekly [--dry-run]
+    python scripts/daily_summary.py --monthly [--dry-run]
 """
 
 from __future__ import annotations
@@ -208,12 +213,133 @@ def _step_project_notes(
     return result
 
 
+def _step_weekly_note(
+    date_str: str,
+    db_path: str,
+    vault_path: str,
+    dry_run: bool,
+) -> dict:
+    """Step 5: Generate or update the Weekly Note for the week containing date_str."""
+    result = {"step": "Weekly Note", "status": "ok", "detail": ""}
+    t0 = time.time()
+
+    try:
+        from scripts.obsidian.weekly_note import (  # type: ignore
+            create_or_update_weekly_note,
+            _parse_week_str,
+        )
+        from datetime import date as _date
+        # Determine the ISO week for the given date
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        iso_year, iso_week, _ = target_date.isocalendar()
+        week_label = f"{iso_year}-W{iso_week:02d}"
+        monday = _date.fromisocalendar(iso_year, iso_week, 1)
+        from datetime import timedelta
+        sunday = monday + timedelta(days=6)
+    except ImportError as exc:
+        result["status"] = "error"
+        result["detail"] = f"Could not import weekly_note: {exc}"
+        return result
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "error"
+        result["detail"] = f"Week parse error: {exc}"
+        return result
+
+    try:
+        path = create_or_update_weekly_note(
+            week_label=week_label,
+            monday=monday,
+            sunday=sunday,
+            db_path=db_path,
+            vault_path=vault_path,
+            dry_run=dry_run,
+        )
+        elapsed = time.time() - t0
+        result["detail"] = f"{path} ({week_label}) in {elapsed:.1f}s"
+        result["written"] = path
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "error"
+        result["detail"] = str(exc)
+
+    return result
+
+
+def _step_monthly_note(
+    date_str: str,
+    db_path: str,
+    vault_path: str,
+    dry_run: bool,
+) -> dict:
+    """Step 6: Generate or update the Monthly Note for the month containing date_str."""
+    result = {"step": "Monthly Note", "status": "ok", "detail": ""}
+    t0 = time.time()
+
+    try:
+        from scripts.obsidian.monthly_note import (  # type: ignore
+            create_or_update_monthly_note,
+            _parse_month_str,
+        )
+        import calendar
+        from datetime import date as _date
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        month_label = f"{target_date.year}-{target_date.month:02d}"
+        _, days_in_month = calendar.monthrange(target_date.year, target_date.month)
+        first_day = _date(target_date.year, target_date.month, 1)
+        last_day = _date(target_date.year, target_date.month, days_in_month)
+    except ImportError as exc:
+        result["status"] = "error"
+        result["detail"] = f"Could not import monthly_note: {exc}"
+        return result
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "error"
+        result["detail"] = f"Month parse error: {exc}"
+        return result
+
+    try:
+        path = create_or_update_monthly_note(
+            month_label=month_label,
+            first_day=first_day,
+            last_day=last_day,
+            db_path=db_path,
+            vault_path=vault_path,
+            dry_run=dry_run,
+        )
+        elapsed = time.time() - t0
+        result["detail"] = f"{path} ({month_label}) in {elapsed:.1f}s"
+        result["written"] = path
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "error"
+        result["detail"] = str(exc)
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def run_pipeline(date_str: str, dry_run: bool = False) -> None:
-    """Execute the full daily summary pipeline."""
+def run_pipeline(
+    date_str: str,
+    dry_run: bool = False,
+    run_weekly: bool = False,
+    run_monthly: bool = False,
+) -> None:
+    """
+    Execute the full daily summary pipeline.
+
+    Parameters
+    ----------
+    date_str:
+        Target date in YYYY-MM-DD format.
+    dry_run:
+        If True, print output without writing any files or DB records.
+    run_weekly:
+        If True, force generation of the weekly note regardless of weekday.
+        If False, the weekly note is generated only if today is Monday.
+    run_monthly:
+        If True, force generation of the monthly note regardless of date.
+        If False, the monthly note is generated only if today is the 1st.
+    """
     print(f"\n{'='*60}")
     print(f"DayTracker Daily Summary Pipeline")
     print(f"Date: {date_str}")
@@ -232,29 +358,69 @@ def run_pipeline(date_str: str, dry_run: bool = False) -> None:
 
     results: list[dict] = []
 
+    # Determine whether to run weekly/monthly steps automatically
+    target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    is_monday = target_date.weekday() == 0  # Monday = 0
+    is_first_of_month = target_date.day == 1
+    should_run_weekly = run_weekly or is_monday
+    should_run_monthly = run_monthly or is_first_of_month
+
+    total_steps = 4 + (1 if should_run_weekly else 0) + (1 if should_run_monthly else 0)
+    step_num = 0
+
     # Step 1: Sync Claude Code
-    print(f"[Step 1/4] Syncing Claude Code history...")
+    step_num += 1
+    print(f"[Step {step_num}/{total_steps}] Syncing Claude Code history...")
     r1 = _step_sync_claude_code(date_str, dry_run)
     results.append(r1)
     _print_step_result(r1)
 
     # Step 2: AI Session notes
-    print(f"\n[Step 2/4] Generating AI Session notes...")
+    step_num += 1
+    print(f"\n[Step {step_num}/{total_steps}] Generating AI Session notes...")
     r2 = _step_ai_sessions(date_str, db_path, vault_path, dry_run)
     results.append(r2)
     _print_step_result(r2)
 
     # Step 3: Daily Note
-    print(f"\n[Step 3/4] Generating Daily Note...")
+    step_num += 1
+    print(f"\n[Step {step_num}/{total_steps}] Generating Daily Note...")
     r3 = _step_daily_note(date_str, db_path, vault_path, dry_run)
     results.append(r3)
     _print_step_result(r3)
 
     # Step 4: Project Notes
-    print(f"\n[Step 4/4] Generating Project Notes...")
+    step_num += 1
+    print(f"\n[Step {step_num}/{total_steps}] Generating Project Notes...")
     r4 = _step_project_notes(db_path, vault_path, dry_run)
     results.append(r4)
     _print_step_result(r4)
+
+    # Step 5: Weekly Note (Monday or --weekly flag)
+    if should_run_weekly:
+        step_num += 1
+        reason = "--weekly flag" if run_weekly else "today is Monday"
+        print(f"\n[Step {step_num}/{total_steps}] Generating Weekly Note ({reason})...")
+        r5 = _step_weekly_note(date_str, db_path, vault_path, dry_run)
+        results.append(r5)
+        _print_step_result(r5)
+    else:
+        print(
+            "\n[weekly_note] Skipped (not Monday; use --weekly to force)."
+        )
+
+    # Step 6: Monthly Note (1st of month or --monthly flag)
+    if should_run_monthly:
+        step_num += 1
+        reason = "--monthly flag" if run_monthly else "today is 1st of month"
+        print(f"\n[Step {step_num}/{total_steps}] Generating Monthly Note ({reason})...")
+        r6 = _step_monthly_note(date_str, db_path, vault_path, dry_run)
+        results.append(r6)
+        _print_step_result(r6)
+    else:
+        print(
+            "\n[monthly_note] Skipped (not 1st of month; use --monthly to force)."
+        )
 
     # Final summary
     _print_final_summary(results, date_str, vault_path, dry_run)
@@ -290,14 +456,20 @@ def _print_final_summary(
         daily_path = Path(vault_path) / f"Daily/{date_str}.md"
         ai_dir = Path(vault_path) / "AI-Sessions"
         projects_dir = Path(vault_path) / "Projects"
+        weekly_dir = Path(vault_path) / "Weekly"
+        monthly_dir = Path(vault_path) / "Monthly"
 
         ai_count = len(list(ai_dir.glob(f"{date_str}-*.md"))) if ai_dir.exists() else 0
         proj_count = len(list(projects_dir.glob("*.md"))) if projects_dir.exists() else 0
+        weekly_count = len(list(weekly_dir.glob("*.md"))) if weekly_dir.exists() else 0
+        monthly_count = len(list(monthly_dir.glob("*.md"))) if monthly_dir.exists() else 0
 
         print(f"\n  Files in vault:")
         print(f"    Daily note   : {daily_path} ({'exists' if daily_path.exists() else 'missing'})")
         print(f"    AI Sessions  : {ai_count} note(s) for {date_str}")
         print(f"    Project notes: {proj_count} total")
+        print(f"    Weekly notes : {weekly_count} total")
+        print(f"    Monthly notes: {monthly_count} total")
 
     print(f"{'='*60}\n")
 
@@ -321,10 +493,31 @@ def main() -> None:
         action="store_true",
         help="Print output without writing any files or DB records.",
     )
+    parser.add_argument(
+        "--weekly",
+        action="store_true",
+        help=(
+            "Force generation of the weekly note regardless of the day of week. "
+            "Without this flag, the weekly note is only generated on Mondays."
+        ),
+    )
+    parser.add_argument(
+        "--monthly",
+        action="store_true",
+        help=(
+            "Force generation of the monthly note regardless of the day of month. "
+            "Without this flag, the monthly note is only generated on the 1st."
+        ),
+    )
     args = parser.parse_args()
 
     date_str = args.date or datetime.now().strftime("%Y-%m-%d")
-    run_pipeline(date_str=date_str, dry_run=args.dry_run)
+    run_pipeline(
+        date_str=date_str,
+        dry_run=args.dry_run,
+        run_weekly=args.weekly,
+        run_monthly=args.monthly,
+    )
 
 
 if __name__ == "__main__":
