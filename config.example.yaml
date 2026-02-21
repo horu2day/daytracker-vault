@@ -1,0 +1,84 @@
+# DayTracker Configuration
+# -------------------------
+# Copy this file to config.yaml and fill in your values.
+# config.yaml is gitignored - never commit it.
+# Sensitive values (API keys) can also be set via .env file.
+
+# ---------------------------------------------------------------------------
+# Obsidian vault path
+# Set automatically by: python scripts/setup_vault.py --vault-path "..."
+# Must be an absolute path to the folder you opened as an Obsidian vault.
+# ---------------------------------------------------------------------------
+vault_path: ""
+
+# ---------------------------------------------------------------------------
+# Watch roots
+# List of root directories whose immediate subdirectories are treated as
+# individual projects. The file watcher and project mapper use these.
+#
+# Example:
+#   watch_roots:
+#     - "C:/MYCLAUDE_PROJECT"
+#     - "C:/Users/yourname/work"
+# ---------------------------------------------------------------------------
+watch_roots:
+  - "C:/MYCLAUDE_PROJECT"
+
+# ---------------------------------------------------------------------------
+# Exclude patterns
+# Glob-style patterns for files and directories to skip during file watching.
+# Matched against each path component (not the full path).
+# ---------------------------------------------------------------------------
+exclude_patterns:
+  - ".git"
+  - "node_modules"
+  - "__pycache__"
+  - "*.log"
+  - "*.tmp"
+  - ".venv"
+  - "venv"
+  - "dist"
+  - "build"
+  - "*.egg-info"
+
+# ---------------------------------------------------------------------------
+# Claude Code history path
+# Path to the directory where Claude Code stores conversation JSONL files.
+# Leave empty to auto-detect: ~/.claude/projects/ (or Windows equivalent).
+#
+# Windows default: C:/Users/{username}/.claude/projects/
+# Mac/Linux default: ~/.claude/projects/
+# ---------------------------------------------------------------------------
+claude_history_path: ""
+
+# ---------------------------------------------------------------------------
+# Obsidian Local REST API (optional)
+# Install the "Local REST API" community plugin in Obsidian to enable this.
+# When enabled, DayTracker uses the API for live note updates while Obsidian
+# is running. Falls back to direct file writes when Obsidian is closed.
+#
+# api_key: find it in Obsidian -> Settings -> Local REST API
+# ---------------------------------------------------------------------------
+obsidian_api:
+  enabled: false
+  port: 27124
+  api_key: ""
+
+# ---------------------------------------------------------------------------
+# Daily summary time
+# Time (24h HH:MM) at which the watcher daemon auto-generates the daily note.
+# ---------------------------------------------------------------------------
+daily_summary_time: "23:55"
+
+# ---------------------------------------------------------------------------
+# Sensitive patterns
+# Regular expressions. Any text matching these patterns will be masked
+# (replaced with ***) before being saved to the database or notes.
+# Add your own patterns as needed.
+# ---------------------------------------------------------------------------
+sensitive_patterns:
+  - "sk-[a-zA-Z0-9]+"
+  - "AIza[a-zA-Z0-9]+"
+  - "password\\s*=\\s*\\S+"
+  - "token\\s*=\\s*['\"]?[a-zA-Z0-9_\\-]{20,}['\"]?"
+  - "secret\\s*=\\s*['\"]?\\S+['\"]?"

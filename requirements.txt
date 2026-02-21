@@ -1,0 +1,9 @@
+pyyaml>=6.0
+sqlite-utils>=3.35
+watchdog>=4.0
+pywinctl>=0.4
+schedule>=1.2
+requests>=2.32
+python-dotenv>=1.0
+browser-history>=0.6
+pyperclip>=1.8

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:kentgigger.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:coddingtonbear.github.io)",
+      "WebFetch(domain:liambx.com)",
+      "WebFetch(domain:www.bricoleur.org)",
+      "WebFetch(domain:gist.github.com)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(tasklist.exe:*)",
+      "Bash(echo:*)",
+      "Bash(printf:*)",
+      "Bash(sqlite3:*)",
+      "Bash(git add:*)"
+    ]
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/auto_allow.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

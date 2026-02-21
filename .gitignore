@@ -1,4 +1,42 @@
+# Obsidian workspace files (existing)
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
 .obsidian/cache
 .trash/
+
+# DayTracker - local data (SQLite DB and collected data)
+data/
+
+# Test vault (contains real personal data generated during testing)
+test-vault/
+
+# User-specific configuration (copy config.example.yaml to config.yaml)
+config.yaml
+
+# Environment variables / secrets
+.env
+
+# SQLite databases
+*.db
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Obsidian vault settings inside vault-templates (user-specific)
+vault-templates/.obsidian/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
