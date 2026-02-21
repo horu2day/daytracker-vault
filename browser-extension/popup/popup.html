@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DayTracker AI Logger</title>
+  <style>
+    body {
+      width: 280px;
+      padding: 12px 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      color: #333;
+      background: #fafafa;
+    }
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0 0 10px;
+      color: #111;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .label { color: #555; }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .online  { background: #22c55e; }
+    .offline { background: #ef4444; }
+    .count {
+      font-weight: 600;
+      color: #2563eb;
+    }
+    .toggle-row {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #e5e7eb;
+    }
+    label { cursor: pointer; user-select: none; }
+    input[type="checkbox"] { margin-right: 6px; cursor: pointer; }
+    .hint {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔍 DayTracker AI Logger</h1>
+
+  <div class="row">
+    <span class="label">서버 상태</span>
+    <span id="server-status">
+      <span class="status-dot offline" id="dot"></span>
+      <span id="status-text">확인 중...</span>
+    </span>
+  </div>
+
+  <div class="row">
+    <span class="label">오늘 캡처된 세션</span>
+    <span class="count" id="session-count">-</span>
+  </div>
+
+  <div class="toggle-row">
+    <label>
+      <input type="checkbox" id="enable-toggle" checked>
+      캡처 활성화
+    </label>
+  </div>
+
+  <p class="hint">서버가 꺼져있으면 캡처가 저장되지 않습니다.<br>
+  <code>python scripts/server.py</code> 로 시작하세요.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

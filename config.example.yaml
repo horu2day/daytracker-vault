@@ -82,3 +82,37 @@ sensitive_patterns:
   - "password\\s*=\\s*\\S+"
   - "token\\s*=\\s*['\"]?[a-zA-Z0-9_\\-]{20,}['\"]?"
   - "secret\\s*=\\s*['\"]?\\S+['\"]?"
+
+# ---------------------------------------------------------------------------
+# Wakapi local server (optional - for VSCode coding time tracking)
+# ---------------------------------------------------------------------------
+# Wakapi is a self-hosted WakaTime-compatible server that receives heartbeats
+# from the VSCode WakaTime extension and provides per-project time summaries.
+#
+# Setup:
+#   1. Download and run Wakapi: https://wakapi.dev  (single binary, no Docker)
+#   2. Install the WakaTime extension in VSCode
+#   3. Point WakaTime at localhost - add to VSCode settings.json:
+#        "wakatime.apiUrl": "http://localhost:3000/api"
+#   4. Copy your Wakapi API key from http://localhost:3000/settings and paste below
+#   5. Set enabled: true
+#
+# When enabled: daemon polls Wakapi every poll_interval_minutes and saves
+#   per-project coding time to activity_log (event_type=vscode_coding).
+# When disabled: daemon uses log-file fallback (vscode_activity.py) which reads
+#   VSCode's own log directory to detect recently opened workspaces.
+# ---------------------------------------------------------------------------
+wakapi:
+  enabled: false
+  url: "http://localhost:3000"
+  api_key: ""
+  poll_interval_minutes: 15
+
+# ---------------------------------------------------------------------------
+# Local receiver server - for browser extension
+# Run: python scripts/server.py
+# Install the browser extension from browser-extension/ folder.
+# ---------------------------------------------------------------------------
+server:
+  enabled: false
+  port: 7331

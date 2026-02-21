@@ -2,8 +2,8 @@
 
 ## 마지막 업데이트
 
-- 날짜: 2026-02-21 23:55
-- 작업 내용: collector 에이전트 - Phase 2 자동 수집 데몬 전체 구현 완료
+- 날짜: 2026-02-22 00:12
+- 작업 내용: collector 에이전트 - Phase 3 VSCode 연동 전체 구현 완료
 
 ---
 
@@ -42,6 +42,13 @@
   - `scripts/collectors/browser_history.py` - Chrome/Edge 히스토리 수집
   - `scripts/watcher_daemon.py` - 통합 데몬 (4개 스레드, 5분 주기 상태 출력, graceful shutdown)
   - `scripts/install_windows.py` - Windows Task Scheduler 등록 스크립트
+- [x] **Phase 3 VSCode 연동 구현 완료 (2026-02-22)**
+  - `scripts/collectors/vscode_wakapi.py` - Wakapi REST API 폴러 (15분 간격, enabled 시)
+  - `scripts/collectors/git_commit.py` - git post-commit hook 핸들러 (activity_log + file_events)
+  - `scripts/install_git_hook.py` - watch_roots 내 모든 git repo에 post-commit hook 일괄 설치
+  - `scripts/collectors/vscode_activity.py` - VSCode 로그 파일 파서 (Wakapi 미사용 시 폴백)
+  - `scripts/watcher_daemon.py` - Thread 5 (vscode_poller) 추가, 시작 시 git hook 자동 설치
+  - `config.example.yaml` - wakapi 섹션 상세 주석 추가
 
 ---
 
@@ -51,10 +58,11 @@
 
 ---
 
-## 다음 할 일 (Phase 3)
+## 다음 할 일 (Phase 4)
 
-- [ ] VSCode 연동 (Wakapi 또는 Extension)
-- [ ] Git post-commit hook 연동 (`scripts/install_git_hook.py`)
+- [ ] 로컬 수신 서버 (`scripts/server.py`) - FastAPI/Flask, 포트 7331
+- [ ] 브라우저 확장 프로그램 (`browser-extension/`) - Manifest V3, ChatGPT/Gemini/Claude.ai
+- [ ] ChatGPT 내보내기 파서 (`scripts/collectors/chatgpt_export.py`)
 
 ---
 
@@ -129,6 +137,26 @@
 - **Browser history**: Chrome 잠금 파일 대응 → `tempfile`로 복사 후 읽기, 항상 `finally`에서 삭제
 
 ---
+
+### Phase 3 테스트 결과 (2026-02-22)
+
+모든 테스트 통과:
+
+- **install_git_hook**: `--dry-run` → 35개 repo 발견, 설치 계획 출력 성공
+- **install_git_hook**: 실제 실행 → 35개 repo에 post-commit hook 설치 성공 (멱등성 확인)
+- **git_commit**: `--dry-run --repo daytracker-vault` → 커밋 [122e9b6] 파싱, 7개 변경 파일 출력
+- **git_commit**: 실제 실행 → activity_log에 `git_commit` 1행, file_events에 7행 삽입 성공
+- **vscode_wakapi**: `--dry-run` → Wakapi disabled 메시지 출력 (정상; config에서 disabled)
+- **vscode_activity**: `--dry-run --hours 24` → VSCode 로그에서 `daytracker-vault` 워크스페이스 감지 성공
+- **daemon dry-run**: 4초 실행 → 5개 스레드 (file_watcher, window_poller, browser_sync, vscode_poller, scheduler) 정상 시작·종료, graceful shutdown 확인
+
+### Phase 3 구현 세부사항
+
+- **vscode_wakapi.py**: `is_wakapi_running()` → `/api/health` 엔드포인트 체크, URLError 시 조용히 skip. `fetch_summaries()` → Basic auth(`:{api_key}`), JSON 파싱. `sync_to_db()` → `vscode_coding` event_type, 날짜+프로젝트 기준 upsert (중복 방지)
+- **git_commit.py**: `git log -1 --pretty=format:...` 로 커밋 메타데이터 추출. `git diff-tree --no-commit-id -r --name-only HEAD` 로 변경 파일 목록. 백그라운드 실행 설계 (stdout 없음, stderr만 로깅)
+- **install_git_hook.py**: `HOOK_BEGIN_MARKER` / `HOOK_END_MARKER` 로 멱등성 보장. 기존 hook에 append, 새 hook이면 shebang(`#!/bin/sh`) 포함 생성. `--uninstall` 시 마커 블록 제거
+- **vscode_activity.py**: `%APPDATA%/Code/logs/` 디렉토리 탐색. `file://` URI 패턴 정규식으로 워크스페이스 경로 추출. watch_roots 기준 프로젝트 매핑. 50개 최근 로그 파일 제한
+- **watcher_daemon.py 업데이트**: `_install_git_hooks()` 시작 시 1회 실행 (dry-run 시 skip). `_start_vscode_thread()` → Wakapi enabled 시 15분 간격 폴링, disabled 시 1시간 간격으로 로그 폴백. 상태 출력에 `git_commits`, `vscode` 카운터 추가
 
 ## 막힌 부분 / 이슈
 

@@ -6,7 +6,11 @@ Architecture:
   Thread 2: window_poller (30-second loop)
   Thread 3: browser_history (60-minute interval)
   Thread 4: scheduler (runs daily_summary at config.daily_summary_time)
+  Thread 5: vscode_poller (15-minute interval; only if wakapi.enabled=true)
   Main thread: status reporting every 5 minutes, graceful shutdown on Ctrl+C
+
+On startup the daemon also ensures git post-commit hooks are installed in all
+repositories found under watch_roots (idempotent).
 
 Usage:
     python scripts/watcher_daemon.py [--dry-run]
@@ -88,6 +92,7 @@ class DayTrackerDaemon:
         self._window_thread: Optional[threading.Thread] = None
         self._browser_thread: Optional[threading.Thread] = None
         self._scheduler_thread: Optional[threading.Thread] = None
+        self._vscode_thread: Optional[threading.Thread] = None
 
         # Counters (approximate; not thread-safe for exact counts)
         self._file_events_count = 0
@@ -106,6 +111,9 @@ class DayTrackerDaemon:
         print(f"[DayTracker] Project root: {PROJECT_ROOT}")
         print(f"[DayTracker] DB: {self.config.get_db_path()}")
 
+        # Install git hooks (idempotent; runs once at startup)
+        self._install_git_hooks()
+
         # Start file watcher
         self._start_file_watcher()
 
@@ -114,6 +122,9 @@ class DayTrackerDaemon:
 
         # Start browser history sync
         self._start_browser_sync()
+
+        # Start VSCode/Wakapi poller (if enabled)
+        self._start_vscode_thread()
 
         # Start scheduler
         self._start_scheduler()
@@ -149,6 +160,11 @@ class DayTrackerDaemon:
         windows = self._count_today_events("window_focus")
         browser = self._count_today_events("browser")
         ai_prompts = self._count_today_ai()
+        git_commits = self._count_today_events("git_commit")
+        vscode = (
+            self._count_today_events("vscode_coding")
+            + self._count_today_events("vscode_activity")
+        )
 
         return {
             "uptime_s": uptime_s,
@@ -157,6 +173,8 @@ class DayTrackerDaemon:
             "windows": windows,
             "browser": browser,
             "ai_prompts": ai_prompts,
+            "git_commits": git_commits,
+            "vscode": vscode,
             "dry_run": self.dry_run,
         }
 
@@ -236,6 +254,93 @@ class DayTrackerDaemon:
             daemon=True,
         )
         self._browser_thread.start()
+
+    # ------------------------------------------------------------------
+    # Git hook installer
+    # ------------------------------------------------------------------
+
+    def _install_git_hooks(self) -> None:
+        """Install DayTracker post-commit hooks in all repos under watch_roots.
+
+        This is idempotent - repos that already have the hook are skipped.
+        Runs synchronously during startup (fast: only walks directories).
+        """
+        if self.dry_run:
+            print("[DayTracker] Skipping git hook installation in dry-run mode.")
+            return
+        try:
+            from scripts.install_git_hook import run as install_hooks  # noqa: E402
+            install_hooks(uninstall=False, dry_run=False, config=self.config)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[DayTracker] WARNING: Could not install git hooks: {exc}",
+                file=sys.stderr,
+            )
+
+    # ------------------------------------------------------------------
+    # VSCode / Wakapi poller
+    # ------------------------------------------------------------------
+
+    # Default Wakapi polling interval (seconds).  Can be overridden via config.
+    VSCODE_POLL_INTERVAL = 900  # 15 minutes
+
+    def _start_vscode_thread(self) -> None:
+        """Start the VSCode/Wakapi polling thread if Wakapi is enabled.
+
+        Polls every ``wakapi.poll_interval_minutes`` (default 15) minutes.
+        If Wakapi is disabled or not reachable, falls back to scanning
+        VSCode log files once per hour using vscode_activity.py.
+        """
+        wakapi_cfg = self.config.get_nested("wakapi") or {}
+        if not isinstance(wakapi_cfg, dict):
+            wakapi_cfg = {}
+
+        wakapi_enabled: bool = bool(wakapi_cfg.get("enabled", False))
+        poll_minutes: int = int(wakapi_cfg.get("poll_interval_minutes", 15))
+        poll_interval_s = poll_minutes * 60
+
+        stop = self._stop_event
+        dry_run = self.dry_run
+        config = self.config
+
+        def _loop() -> None:
+            if wakapi_enabled:
+                print(
+                    f"[DayTracker] VSCode/Wakapi poller started "
+                    f"(interval={poll_interval_s}s)."
+                )
+            else:
+                print(
+                    "[DayTracker] VSCode activity poller started "
+                    "(Wakapi disabled; using log-file fallback, interval=3600s)."
+                )
+
+            # Use a longer interval for the log-file fallback
+            interval_s = poll_interval_s if wakapi_enabled else 3600
+
+            while not stop.is_set():
+                try:
+                    if wakapi_enabled:
+                        from scripts.collectors.vscode_wakapi import run as wakapi_run  # noqa: E402
+                        wakapi_run(dry_run=dry_run, config=config)
+                    else:
+                        from scripts.collectors.vscode_activity import run as activity_run  # noqa: E402
+                        activity_run(dry_run=dry_run, hours=1, config=config)
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[DayTracker] ERROR in VSCode poller: {exc}",
+                        file=sys.stderr,
+                    )
+                stop.wait(interval_s)
+
+            print("[DayTracker] VSCode poller stopped.")
+
+        self._vscode_thread = threading.Thread(
+            target=_loop,
+            name="vscode_poller",
+            daemon=True,
+        )
+        self._vscode_thread.start()
 
     # ------------------------------------------------------------------
     # Scheduler (daily summary)
@@ -327,6 +432,8 @@ class DayTrackerDaemon:
             f"[DayTracker] {now_str} | uptime: {s['uptime_str']} | "
             f"file_events: {s['file_events']} | "
             f"ai_prompts: {s['ai_prompts']} | "
+            f"git_commits: {s['git_commits']} | "
+            f"vscode: {s['vscode']} | "
             f"windows: {s['windows']} | "
             f"browser: {s['browser']}"
         )
@@ -391,6 +498,7 @@ class DayTrackerDaemon:
         for thread, name in [
             (self._window_thread, "window poller"),
             (self._browser_thread, "browser sync"),
+            (self._vscode_thread, "vscode poller"),
             (self._scheduler_thread, "scheduler"),
         ]:
             if thread is not None and thread.is_alive():
