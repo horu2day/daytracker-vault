@@ -2,8 +2,8 @@
 
 ## 마지막 업데이트
 
-- 날짜: 2026-02-21 23:40
-- 작업 내용: obsidian 에이전트 - Obsidian 노트 생성기 전체 구현 완료
+- 날짜: 2026-02-21 23:55
+- 작업 내용: collector 에이전트 - Phase 2 자동 수집 데몬 전체 구현 완료
 
 ---
 
@@ -36,6 +36,12 @@
   - `vault-templates/Templates/daily.md` - Templater 템플릿
   - `vault-templates/Templates/ai-session.md` - AI 세션 템플릿
   - `vault-templates/Templates/project.md` - 프로젝트 노트 템플릿 (Dataview 쿼리 포함)
+- [x] **Phase 2 자동 수집 데몬 구현 완료 (2026-02-21)**
+  - `scripts/collectors/file_watcher.py` - watchdog 기반 파일시스템 감시
+  - `scripts/collectors/window_poller.py` - pywinctl 기반 활성 창 폴러 (30초 간격)
+  - `scripts/collectors/browser_history.py` - Chrome/Edge 히스토리 수집
+  - `scripts/watcher_daemon.py` - 통합 데몬 (4개 스레드, 5분 주기 상태 출력, graceful shutdown)
+  - `scripts/install_windows.py` - Windows Task Scheduler 등록 스크립트
 
 ---
 
@@ -45,11 +51,10 @@
 
 ---
 
-## 다음 할 일 (Phase 2)
+## 다음 할 일 (Phase 3)
 
-- [ ] `scripts/collectors/file_watcher.py` - 파일시스템 감시 데몬 (watchdog)
-- [ ] `scripts/collectors/window_poller.py` - 활성 창 폴러 (pywinctl)
-- [ ] `scripts/watcher_daemon.py` - 상시 실행 데몬 통합 + 스케줄러
+- [ ] VSCode 연동 (Wakapi 또는 Extension)
+- [ ] Git post-commit hook 연동 (`scripts/install_git_hook.py`)
 
 ---
 
@@ -82,8 +87,7 @@
 
 - 버전: Python 3.11.9
 - 설치됨: `requests` 2.32.5, `python-dotenv` 1.2.1
-- **Phase 1 필요 미설치**: `pyyaml`, `sqlite-utils`
-- **Phase 2 필요 미설치**: `watchdog`, `pywinctl`, `schedule`, `browser-history`, `pyperclip`
+- **Phase 2 설치 완료**: `watchdog` 6.0.0, `pywinctl` 0.4.1, `schedule` 1.2.2, `browser-history` 0.5.0, `pyperclip` 1.11.0, `sqlite-utils` 3.39
 
 ### auto-allow hook (활성화 완료)
 
@@ -107,6 +111,22 @@
 - Step 3 Daily Note: `test-vault/Daily/2026-02-21.md` 생성
 - Step 4 Project Note: `test-vault/Projects/daytracker-vault.md` 생성 (Dataview 쿼리 포함)
 - 2회차 실행 idempotency 확인: 모든 단계 정상 스킵/업데이트
+
+### Phase 2 수집 데몬 테스트 결과 (2026-02-21)
+
+모든 테스트 통과:
+- **file_watcher**: `start_watching(dry_run=True)` → 10초 실행 후 정상 종료. `C:\MYCLAUDE_PROJECT` watch 확인
+- **window_poller**: `start_polling(interval=5, dry_run=True)` → 7초 실행, 활성 창(Brave/YouTube) 감지 성공
+- **browser_history**: `--dry-run --hours 1000` → 14개 항목 발견 (2026-01-11 Chrome 기록), `--hours 24`는 최신 기록 없어 정상적으로 0건 반환
+- **daemon**: 5초 dry-run → 4개 스레드(file_watcher, window_poller, browser_sync, scheduler) 정상 시작·종료, graceful shutdown 확인
+- **install_windows**: `--dry-run` → 설치 계획 출력 성공, `--status` → 미설치 상태 정상 응답
+
+### Phase 2 구현 세부사항
+
+- **stdout 중복 래핑 버그 수정**: 여러 모듈이 동시 import될 때 `sys.stdout`을 중복 래핑하면 `I/O operation on closed file` 오류 발생 → `_daytracker_wrapped` 플래그로 중복 래핑 방지
+- **debounce**: 동일 파일 2초 이내 중복 이벤트 무시 (파일 저장 스파이크 대응)
+- **graceful shutdown**: `threading.Event`로 모든 스레드에 종료 신호 전달, `observer.stop() + join()` 순서 보장
+- **Browser history**: Chrome 잠금 파일 대응 → `tempfile`로 복사 후 읽기, 항상 `finally`에서 삭제
 
 ---
 
