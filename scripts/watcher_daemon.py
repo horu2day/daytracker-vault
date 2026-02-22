@@ -5,9 +5,16 @@ Architecture:
   Thread 1: file_watcher (watchdog Observer)
   Thread 2: window_poller (30-second loop)
   Thread 3: browser_history (60-minute interval)
-  Thread 4: scheduler (runs daily_summary at config.daily_summary_time)
+  Thread 4: scheduler (daily_summary, stuck_detector, weekly_review, weekly_note, monthly_note)
   Thread 5: vscode_poller (15-minute interval; only if wakapi.enabled=true)
   Main thread: status reporting every 5 minutes, graceful shutdown on Ctrl+C
+
+Scheduler tasks:
+  - daily_summary_time (default 23:55) every day
+  - stuck_detector every 15 minutes (LIVE mode only)
+  - weekly_review every Friday at 18:00 (LIVE mode only)
+  - weekly_note every Monday at 00:05
+  - monthly_note check every day at 00:10 (runs only on the 1st)
 
 On startup the daemon also ensures git post-commit hooks are installed in all
 repositories found under watch_roots (idempotent).
@@ -114,6 +121,9 @@ class DayTrackerDaemon:
         # Install git hooks (idempotent; runs once at startup)
         self._install_git_hooks()
 
+        # Run morning briefing on first start of the day
+        self._run_startup_briefing()
+
         # Start file watcher
         self._start_file_watcher()
 
@@ -178,6 +188,70 @@ class DayTrackerDaemon:
             "vscode": vscode,
             "dry_run": self.dry_run,
         }
+
+    # ------------------------------------------------------------------
+    # Startup briefing
+    # ------------------------------------------------------------------
+
+    def _run_startup_briefing(self) -> None:
+        """Run the morning briefing if this is the first daemon start of the day.
+
+        Checks a sentinel file in the data directory to determine whether the
+        briefing has already run today.  If not, runs morning_briefing.py
+        synchronously so the output appears before the main loop starts.
+        """
+        if self.dry_run:
+            print("[DayTracker] Skipping startup briefing in dry-run mode.")
+            return
+
+        # Sentinel file: data/last_briefing_date.txt
+        sentinel_path = (
+            Path(self.config.get_db_path()).parent / "last_briefing_date.txt"
+        )
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Check if already ran today
+        if sentinel_path.exists():
+            try:
+                last_run = sentinel_path.read_text(encoding="utf-8").strip()
+                if last_run == today_str:
+                    print("[DayTracker] Morning briefing already ran today; skipping.")
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Run the briefing
+        print("[DayTracker] Running startup morning briefing...")
+        briefing_script = PROJECT_ROOT / "scripts" / "agents" / "morning_briefing.py"
+        if not briefing_script.exists():
+            print(
+                f"[DayTracker] WARNING: morning_briefing.py not found at {briefing_script}",
+                file=sys.stderr,
+            )
+            return
+
+        import subprocess
+        try:
+            result = subprocess.run(
+                [sys.executable, str(briefing_script)],
+                cwd=str(PROJECT_ROOT),
+                capture_output=False,  # Let output go to terminal
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if result.returncode == 0:
+                # Record that we ran today
+                try:
+                    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+                    sentinel_path.write_text(today_str, encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[DayTracker] WARNING: Could not run startup briefing: {exc}",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------------
     # File watcher
@@ -435,6 +509,21 @@ class DayTrackerDaemon:
                 cmd.append("--dry-run")
             _run_subprocess(cmd, "monthly note")
 
+        def _run_morning_briefing() -> None:
+            """Run the morning briefing agent at 08:00."""
+            print("[DayTracker] Running morning briefing (08:00 schedule)...")
+            briefing_script = project_root / "scripts" / "agents" / "morning_briefing.py"
+            if not briefing_script.exists():
+                print(
+                    f"[DayTracker] WARNING: morning_briefing.py not found at {briefing_script}",
+                    file=sys.stderr,
+                )
+                return
+            cmd = [sys.executable, str(briefing_script)]
+            if dry_run:
+                cmd.append("--dry-run")
+            _run_subprocess(cmd, "morning briefing")
+
         # Daily summary at configured time every day
         schedule.every().day.at(summary_time).do(_run_daily_summary)
         print(f"[DayTracker] Daily summary scheduled at {summary_time}.")
@@ -446,6 +535,47 @@ class DayTrackerDaemon:
         # Monthly note check every day at 00:10 (only executes on the 1st)
         schedule.every().day.at("00:10").do(_run_monthly_note)
         print("[DayTracker] Monthly note scheduled for the 1st of each month at 00:10.")
+
+        # Morning briefing every day at 08:00
+        schedule.every().day.at("08:00").do(_run_morning_briefing)
+        print("[DayTracker] Morning briefing scheduled every day at 08:00.")
+
+        def _run_stuck_detector() -> None:
+            """Run the stuck detector agent (LIVE mode only)."""
+            if dry_run:
+                return  # never run in dry-run mode
+            stuck_script = project_root / "scripts" / "agents" / "stuck_detector.py"
+            if not stuck_script.exists():
+                print(
+                    f"[DayTracker] WARNING: stuck_detector.py not found at {stuck_script}",
+                    file=sys.stderr,
+                )
+                return
+            cmd = [sys.executable, str(stuck_script)]
+            _run_subprocess(cmd, "stuck detector")
+
+        def _run_weekly_review() -> None:
+            """Run the weekly review agent every Friday at 18:00 (LIVE mode only)."""
+            if dry_run:
+                return  # never run in dry-run mode
+            review_script = project_root / "scripts" / "agents" / "weekly_review.py"
+            if not review_script.exists():
+                print(
+                    f"[DayTracker] WARNING: weekly_review.py not found at {review_script}",
+                    file=sys.stderr,
+                )
+                return
+            print("[DayTracker] Running weekly review (Friday 18:00 schedule)...")
+            cmd = [sys.executable, str(review_script)]
+            _run_subprocess(cmd, "weekly review")
+
+        # Stuck detector every 15 minutes (LIVE mode only)
+        schedule.every(15).minutes.do(_run_stuck_detector)
+        print("[DayTracker] Stuck detector scheduled every 15 minutes (LIVE mode only).")
+
+        # Weekly review every Friday at 18:00 (LIVE mode only)
+        schedule.every().friday.at("18:00").do(_run_weekly_review)
+        print("[DayTracker] Weekly review scheduled every Friday at 18:00 (LIVE mode only).")
 
         def _schedule_loop() -> None:
             while not stop.is_set():
