@@ -132,11 +132,11 @@ STUCK_CHECK_INTERVAL_MS = 5 * 60_000   # stuck detector check every 5 min
 
 # Character state -> emoji
 CHAR_EMOJI: dict[str, str] = {
-    "idle":      "🤖",
-    "working":   "⚡",
-    "sleeping":  "😴",
-    "alert":     "💡",
-    "celebrate": "🎉",
+    "idle":      "🐶",
+    "working":   "🐕",
+    "sleeping":  "🐾",
+    "alert":     "🐩",
+    "celebrate": "🦴",
 }
 
 # Colours
@@ -348,16 +348,16 @@ class CharacterWindow(QWidget):
 
     def _setup_tray(self) -> None:
         """Create a system tray icon with a quit action."""
-        # Build a simple 16x16 pixmap for tray icon (robot emoji rendered to image)
+        # Build a simple 16x16 pixmap for tray icon (dog emoji rendered to image)
         pix = QPixmap(16, 16)
         pix.fill(Qt.GlobalColor.transparent)
         p = QPainter(pix)
         p.setFont(QFont("Segoe UI Emoji", 10))
-        p.drawText(0, 12, "🤖")
+        p.drawText(0, 12, "🐶")
         p.end()
 
         self._tray = QSystemTrayIcon(QIcon(pix), self)
-        self._tray.setToolTip("DayTracker Character Agent")
+        self._tray.setToolTip("🐶 DayTracker 강아지 에이전트")
 
         menu = QMenu()
         status_action = QAction("오늘 상태 보기", self)
@@ -607,21 +607,21 @@ class CharacterWindow(QWidget):
             if text:
                 self._show_bubble(text, BUBBLE_DISPLAY_MS)
             else:
-                self._show_bubble("데이터 없음\n(python scripts/watcher_daemon.py 실행 필요)", 5000)
+                self._show_bubble("🐶 왈왈! 데이터 없음\n(watcher_daemon.py 실행 필요)", 5000)
             QTimer.singleShot(2500, lambda: self._set_state("idle"))
 
         elif tag == "briefing":
             if text:
                 self._show_bubble(text, 12_000)
             else:
-                self._show_bubble("브리핑 데이터 없음", 4000)
+                self._show_bubble("🐶 아직 데이터가 없어요!", 4000)
             QTimer.singleShot(3000, lambda: self._set_state("idle"))
 
         elif tag == "stuck":
             if text:
                 # A non-empty result means the user is stuck
                 self._set_state("alert")
-                self._show_bubble(f"혹시 막히셨나요?\n{text}", 8000)
+                self._show_bubble(f"🐶 왈왈! 혹시 막히셨나요?\n{text}", 8000)
                 QTimer.singleShot(8500, lambda: self._set_state("idle"))
             # If empty: not stuck; stay in current state
 
@@ -665,9 +665,9 @@ class CharacterWindow(QWidget):
             proj_str = " | ".join(parts) if parts else "활동 없음"
 
             return (
-                f"오늘 {today}\n"
+                f"🐶 오늘 {today}\n"
                 f"AI 세션: {ai_count}건  |  파일: {file_count}건\n"
-                f"프로젝트: {proj_str}"
+                f"프로젝: {proj_str}"
             )
         except Exception as exc:
             return f"DB 쿼리 오류: {exc}"
