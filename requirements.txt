@@ -8,3 +8,5 @@ python-dotenv>=1.0
 browser-history>=0.6
 pyperclip>=1.8
 datasette>=0.64
+# Phase 7: Desktop character agent
+PyQt6>=6.4

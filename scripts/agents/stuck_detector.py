@@ -431,11 +431,54 @@ def write_briefing_note(
 # Main run function
 # ---------------------------------------------------------------------------
 
+def generate_short_hint(stuck_files: list[dict]) -> str:
+    """
+    Generate a single-line compact hint for the desktop character agent bubble.
+
+    Returns one line such as:
+        scripts/watcher.py 30분간 5회 수정 중
+
+    Returns an empty string if no stuck files detected.
+
+    Parameters
+    ----------
+    stuck_files : list[dict]
+        Output from detect_stuck_files().
+    """
+    if not stuck_files:
+        return ""
+
+    # Show the most-modified file
+    top = stuck_files[0]
+    file_path = top["file_path"]
+    count = top["modify_count"]
+    first_seen = top.get("first_seen", "")
+    last_seen = top.get("last_seen", "")
+
+    # Calculate elapsed minutes
+    try:
+        ts_start = _parse_ts(first_seen)
+        ts_end = _parse_ts(last_seen)
+        if ts_start and ts_end:
+            elapsed = max(1, int((ts_end - ts_start).total_seconds() / 60))
+        else:
+            elapsed = 0
+    except Exception:
+        elapsed = 0
+
+    # Display only the filename for brevity
+    fname = Path(file_path).name if file_path else file_path
+    if elapsed > 0:
+        return f"{fname} {elapsed}분간 {count}회 수정 중"
+    return f"{fname} {count}회 수정 중"
+
+
 def run(
     threshold_minutes: int = 30,
     dry_run: bool = False,
     config=None,
     write_note: bool = True,
+    short: bool = False,
 ) -> list[dict]:
     """
     Run the stuck detector.
@@ -450,6 +493,9 @@ def run(
         Optional Config instance (will load from config.yaml if None).
     write_note:
         If True (and not dry_run), write hints to the vault Briefings note.
+    short:
+        If True, print a single-line compact hint (for desktop character
+        agent bubble) and return immediately. Prints nothing if not stuck.
 
     Returns
     -------
@@ -478,6 +524,14 @@ def run(
         return []
 
     stuck_files = detect_stuck_files(db_path, threshold_minutes=threshold_minutes)
+
+    # Short mode: compact single-line output for desktop character bubble
+    if short:
+        line = generate_short_hint(stuck_files)
+        if line:
+            print(line)
+        # (empty output = not stuck, which is expected by the Tauri command)
+        return stuck_files
 
     if not stuck_files:
         print(
@@ -535,12 +589,21 @@ def main() -> None:
         action="store_true",
         help="Do not write hints to the vault Briefings note.",
     )
+    parser.add_argument(
+        "--short",
+        action="store_true",
+        help=(
+            "Print a single compact line for the desktop character agent bubble. "
+            "Outputs nothing if no stuck pattern is detected."
+        ),
+    )
     args = parser.parse_args()
 
     run(
         threshold_minutes=args.threshold_minutes,
         dry_run=args.dry_run,
         write_note=not args.no_note,
+        short=args.short,
     )
 
 

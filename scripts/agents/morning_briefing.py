@@ -336,6 +336,60 @@ def _get_most_recent_project(db_path: str, yesterday: str) -> Optional[dict]:
 # Briefing text generator
 # ---------------------------------------------------------------------------
 
+def generate_short_briefing(data: dict) -> str:
+    """
+    Generate a compact 2-3 line morning briefing for display in the desktop
+    character agent bubble.
+
+    Returns a string like:
+        📅 오늘: project1(AI 3건) | project2(파일 12건)
+        🕐 마지막: 22:45 (daytracker-vault)
+
+    Parameters
+    ----------
+    data : dict
+        Same structure as generate_briefing() data dict.
+    """
+    projects: list[dict] = data.get("projects", [])
+    most_recent: dict | None = data.get("most_recent_project")
+    earliest_today: str | None = data.get("earliest_today")
+
+    lines: list[str] = []
+
+    # Line 1: today's projects summary
+    if projects:
+        parts = []
+        for proj in projects[:3]:  # max 3 projects
+            name = proj["name"]
+            ai_c = proj["ai_count"]
+            file_c = proj["file_count"]
+            if ai_c and file_c:
+                parts.append(f"{name}(AI {ai_c}건·파일 {file_c}건)")
+            elif ai_c:
+                parts.append(f"{name}(AI {ai_c}건)")
+            elif file_c:
+                parts.append(f"{name}(파일 {file_c}건)")
+            else:
+                parts.append(name)
+        lines.append("오늘: " + " | ".join(parts))
+    else:
+        lines.append("오늘: 어제 활동 기록 없음")
+
+    # Line 2: last activity timestamp
+    if most_recent:
+        proj_name = most_recent["name"]
+        last_ts_raw = most_recent.get("last_ts", "")
+        last_dt = _to_local(_parse_ts(last_ts_raw))
+        last_ts_str = last_dt.strftime("%H:%M") if last_dt else "?"
+        lines.append(f"마지막: {last_ts_str} ({proj_name})")
+
+    # Line 3 (optional): today's first activity
+    if earliest_today:
+        lines.append(f"오늘 첫 활동: {earliest_today}")
+
+    return "\n".join(lines)
+
+
 def generate_briefing(data: dict) -> str:
     """
     Generate the morning briefing as a plain text string
@@ -455,7 +509,7 @@ def _write_briefing_note(vault_path: str, today_str: str, content: str) -> str:
 # Main run function
 # ---------------------------------------------------------------------------
 
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False, short: bool = False) -> None:
     """
     Entry point for the morning briefing agent.
 
@@ -463,6 +517,9 @@ def run(dry_run: bool = False) -> None:
     ----------
     dry_run : bool
         If True, print the briefing but do not write the vault note.
+    short : bool
+        If True, print a compact 2-3 line summary (for desktop character
+        agent bubble) instead of the full briefing.
     """
     today_str = date.today().strftime("%Y-%m-%d")
     yesterday_str = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -497,6 +554,11 @@ def run(dry_run: bool = False) -> None:
         "earliest_today": summary["earliest_today"],
     }
 
+    # Short mode: compact output for desktop character bubble
+    if short:
+        print(generate_short_briefing(data))
+        return
+
     # Generate briefing text
     briefing_text = generate_briefing(data)
 
@@ -525,8 +587,16 @@ def main() -> None:
         action="store_true",
         help="Print the briefing to stdout without writing the vault note.",
     )
+    parser.add_argument(
+        "--short",
+        action="store_true",
+        help=(
+            "Print a compact 2-3 line summary suitable for the desktop character "
+            "agent bubble instead of the full briefing."
+        ),
+    )
     args = parser.parse_args()
-    run(dry_run=args.dry_run)
+    run(dry_run=args.dry_run, short=args.short)
 
 
 if __name__ == "__main__":

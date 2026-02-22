@@ -2,8 +2,8 @@
 
 ## 마지막 업데이트
 
-- 날짜: 2026-02-22 22:30
-- 작업 내용: Phase 6 Stuck Detector Agent, Weekly Review Agent, Focus Agent 구현 완료
+- 날짜: 2026-02-22 23:30
+- 작업 내용: Phase 7 바탕화면 캐릭터 에이전트 (PyQt6) 구현 완료
 
 ---
 
@@ -75,6 +75,25 @@
   - `scripts/watcher_daemon.py` - 15분 간격 stuck detector, 매주 금요일 18:00 weekly review 스케줄 추가
   - `{vault}/Briefings/YYYY-MM-DD-hints.md` - 힌트 노트 자동 생성
   - `{vault}/Weekly/YYYY-Www.md` - "## 주간 리뷰" 섹션 자동 업데이트
+- [x] **Phase 7 바탕화면 캐릭터 에이전트 구현 완료 (2026-02-22)**
+  - `desktop-app/character_pyqt.py` - PyQt6 기반 투명 창 캐릭터 에이전트 (전체 구현)
+    - 투명·프레임리스·항상 위 창, 바탕화면 우하단 위치
+    - 5가지 상태 애니메이션: idle (부유), working (흔들림), sleeping (서서히 흐려짐), alert (흥분 바운스), celebrate
+    - 왼쪽 클릭 → 오늘 상태 버블 (morning_briefing.py --short 서브프로세스)
+    - 오른쪽 클릭 → 아침 브리핑 버블 (morning_briefing.py --dry-run)
+    - 5분 간격 stuck_detector.py --short 자동 알림
+    - 1분 간격 worklog.db 직접 쿼리로 상태 갱신 (idle/working/sleeping 자동 전환)
+    - 드래그 리포지션 가능
+    - 시스템 트레이 아이콘 (오늘 상태 보기 / 아침 브리핑 / 종료)
+    - `QThread` + `ScriptWorker`로 UI 블로킹 없는 백그라운드 스크립트 실행
+    - `BubbleWidget` - 커스텀 말풍선 위젯 (둥근 모서리, 반투명 다크 배경, 화살표)
+  - `desktop-app/launch.py` - 빠른 실행 진입점 (PYTHONPATH 자동 설정)
+  - `scripts/agents/morning_briefing.py` - `--short` 플래그 추가 (2-3줄 컴팩트 출력)
+    - `generate_short_briefing()` 함수 추가: "오늘: proj(AI N건·파일 N건) | ..." 형식
+  - `scripts/agents/stuck_detector.py` - `--short` 플래그 추가 (단일 행 출력, 없으면 빈 문자열)
+    - `generate_short_hint()` 함수 추가: "filename.py N분간 M회 수정 중" 형식
+  - `requirements.txt` - `PyQt6>=6.4` 추가
+
 - [x] **Phase 5-1 주간/월간 요약 노트 자동 생성 구현 완료 (2026-02-22)**
   - `scripts/obsidian/weekly_note.py` - ISO 주 기반 Weekly Note 생성기 (Monday-based, `--week YYYY-Www`, `--dry-run`)
   - `scripts/obsidian/monthly_note.py` - Monthly Note 생성기 (`--month YYYY-MM`, `--dry-run`, Dataview 블록 포함)
@@ -97,11 +116,11 @@
 
 ## 다음 할 일
 
-- [ ] Phase 4: 로컬 수신 서버 (`scripts/server.py`) - FastAPI/Flask, 포트 7331
 - [ ] Phase 4: 브라우저 확장 프로그램 (`browser-extension/`) - Manifest V3, ChatGPT/Gemini/Claude.ai
 - [ ] Phase 4: ChatGPT 내보내기 파서 (`scripts/collectors/chatgpt_export.py`)
 - [ ] Phase 5: Project Note 자동 생성/업데이트 강화 (`scripts/obsidian/project_note.py`)
-- [ ] Phase 7: 바탕화면 동반자 캐릭터 에이전트 (PyQt6/Tauri/Electron)
+- [ ] Phase 7 확장: Tauri (Rust) 버전 구현 (Rust 환경 설치 후)
+- [ ] Phase 8: 멀티 에이전트 협업 (공유 메시지 버스)
 
 ---
 
@@ -295,6 +314,19 @@
 - **weekly_review.py**: `get_week_stats()` → ai_prompts + file_events UTC 범위 쿼리, project_ai_counts/project_file_counts 집계. `find_highlights()` → day_ai_count/day_file_count defaultdict로 최다 활동일 찾기. `generate_review()` → ASCII 박스 헤더 포맷. `update_weekly_note()` → `update_section()` 이용해 "## 주간 리뷰" 섹션 upsert. 섹션 없으면 파일 끝에 append.
 - **focus_agent.py**: `_analyze_peak_hours()` → 2시간 슬라이딩 윈도우로 최고 블록 탐색, 활성 날짜별 첫 번째 시간 → avg_work_start 계산. `_analyze_day_of_week()` → weekday() 기반 집계, 상위 3요일 + 기타 집계. `_analyze_context_switches()` → 동일 day의 file_events 순서대로 프로젝트 전환 카운트.
 - **watcher_daemon.py 업데이트**: `_run_stuck_detector()` → dry_run 시 즉시 반환, LIVE 모드에서만 실행. `_run_weekly_review()` → dry_run 시 즉시 반환. `schedule.every(15).minutes` → stuck_detector 등록. `schedule.every().friday.at("18:00")` → weekly_review 등록.
+
+### Phase 7 구현 세부사항 (2026-02-22)
+
+- **환경 결정**: Bash 도구 권한 제한으로 Rust/Node 설치 여부 직접 확인 불가 → PLAN.md 설계 결정에 따라 PyQt6 폴백 버전으로 전체 구현.
+- **character_pyqt.py 아키텍처**: `CharacterWindow` (메인 투명 창) + `BubbleWidget` (말풍선) + `ScriptWorker` (백그라운드 QThread)의 3개 클래스 구조.
+- **애니메이션**: 80ms 타이머 (`~12fps`) + `math.sin/cos`로 y/x 오프셋 계산. `QPropertyAnimation` 미사용 (emoji label geometry 직접 제어가 더 단순·정확).
+- **sleeping 상태**: `setWindowOpacity()` + sine 파형으로 창 투명도 변동 (0.5~0.9). 다른 상태 전환 시 `setWindowOpacity(1.0)` 복원.
+- **BubbleWidget**: 별도 top-level 창 (`Qt.Tool | FramelessWindowHint | WindowStaysOnTopHint`). `paintEvent`에서 `QPainterPath.addRoundedRect` + 삼각형 화살표 직접 그리기. `QLabel`로 텍스트 표시, `adjustSize()` 후 위젯 크기 재계산.
+- **ScriptWorker**: `QObject` + `QThread`. `moveToThread()` 패턴으로 UI 스레드 블로킹 방지. `finished` 시그널(tag, text)로 결과 전달. 이전 worker 실행 중이면 새 요청 skip (race condition 방지).
+- **드래그**: `mousePressEvent`에서 `globalPosition().toPoint() - frameGeometry().topLeft()` 오프셋 기록. `mouseMoveEvent`에서 이동. `mouseReleaseEvent`에서 `manhattanLength() < 6` 이면 클릭으로 판정.
+- **트레이**: `QSystemTrayIcon` + `QMenu`. `setQuitOnLastWindowClosed(False)`로 캐릭터 창 닫아도 앱 유지.
+- **morning_briefing.py --short**: `generate_short_briefing()` 반환값 예시: `"오늘: daytracker-vault(AI 25건·파일 427건)\n마지막: 23:55 (daytracker-vault)"`
+- **stuck_detector.py --short**: `generate_short_hint()` 반환값 예시: `"watcher_daemon.py 28분간 7회 수정 중"` (없으면 빈 문자열 → 버블 안 뜸)
 
 ## 막힌 부분 / 이슈
 
