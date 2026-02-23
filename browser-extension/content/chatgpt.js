@@ -49,7 +49,7 @@
 
   // 디바운스 타이머
   let debounceTimer = null;
-  const observer = new MutationObserver(() => {
+  function attemptCapture() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       if (!isResponseComplete()) return;
@@ -58,8 +58,24 @@
         sendTurn(turn);
       }
     }, 1500);
-  });
+  }
 
+  const observer = new MutationObserver(attemptCapture);
   observer.observe(document.body, { childList: true, subtree: true });
-  console.debug("[DayTracker] ChatGPT logger active.");
+
+  // SPA 환경 대응: URL 변경 감지 및 주기적 체크 (좀비 인젝션 패턴 보완)
+  let lastUrl = window.location.href;
+  setInterval(() => {
+    if (window.location.href !== lastUrl) {
+      lastUrl = window.location.href;
+      lastSentId = null; // 대화방 이동 시 초기화 (선택 사항)
+      attemptCapture();
+    }
+    // MutationObserver가 놓칠 수 있는 상황 대비 주기적 강제 체크 (0.5초 주기보다 완화된 2초)
+    if (isResponseComplete()) {
+      attemptCapture();
+    }
+  }, 2000);
+
+  console.debug("[DayTracker] ChatGPT logger active (with polling backup).");
 })();

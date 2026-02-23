@@ -136,7 +136,7 @@ def get_yesterday_summary(db_path: str, vault_path: str) -> dict:
             # AI prompts per project for yesterday
             ai_rows = conn.execute(
                 """
-                SELECT COALESCE(ap.project, p.name, 'unknown') AS proj_name,
+                SELECT COALESCE(p.name, 'unknown') AS proj_name,
                        COUNT(*) AS cnt,
                        MAX(ap.timestamp) AS last_ts
                 FROM ai_prompts ap
@@ -291,7 +291,7 @@ def _get_most_recent_project(db_path: str, yesterday: str) -> Optional[dict]:
             # Check ai_prompts for latest
             ai_row = conn.execute(
                 """
-                SELECT COALESCE(ap.project, p.name, 'unknown') AS proj_name,
+                SELECT COALESCE(p.name, 'unknown') AS proj_name,
                        MAX(ap.timestamp) AS last_ts
                 FROM ai_prompts ap
                 LEFT JOIN projects p ON ap.project_id = p.id
@@ -391,19 +391,6 @@ def generate_short_briefing(data: dict) -> str:
 
 
 def generate_briefing(data: dict) -> str:
-    """
-    Generate the morning briefing as a plain text string
-    (suitable for both terminal output and vault note body).
-
-    Parameters
-    ----------
-    data : dict
-        Output from assembling get_yesterday_summary(), get_incomplete_todos(),
-        get_last_modified_file().
-        Expected keys:
-            today_str, yesterday_str, projects, todos,
-            last_file, most_recent_project, earliest_today
-    """
     today_str: str = data.get("today_str", date.today().strftime("%Y-%m-%d"))
     yesterday_str: str = data.get("yesterday_str", "")
     projects: list[dict] = data.get("projects", [])
@@ -414,63 +401,47 @@ def generate_briefing(data: dict) -> str:
 
     lines: list[str] = []
 
-    # ── Header ──────────────────────────────────────────────────────────────
-    title = f"  DayTracker Morning Briefing  {today_str} "
-    width = max(len(title) + 4, 50)
-    border = "=" * (width - 2)
-    lines.append(f"+{border}+")
-    lines.append(f"|{title.center(width - 2)}|")
-    lines.append(f"+{border}+")
-    lines.append("")
+    lines.append(f"☀️ DayTracker 모닝 브리핑 ({today_str})")
+    lines.append("="*30)
 
-    # ── Yesterday's projects ────────────────────────────────────────────────
-    lines.append("[Projects] Yesterday's projects")
+    lines.append("📂 [어제 활동한 프로젝트]")
     if projects:
-        for proj in projects:
+        for proj in projects[:3]: # 상위 3개 제한
             name = proj["name"]
-            ai_c = proj["ai_count"]
-            file_c = proj["file_count"]
-            lines.append(f"  * {name}  (AI {ai_c}건, Files {file_c}건)")
+            ai_c, file_c = proj["ai_count"], proj["file_count"]
+            lines.append(f"  • {name} (AI {ai_c}건 / 파일 {file_c}건)")
     else:
-        lines.append("  (no activity records for yesterday)")
+        lines.append("  • 활동 기록 없음")
     lines.append("")
 
-    # ── Incomplete TODOs ────────────────────────────────────────────────────
-    lines.append("[TODOs] Incomplete items from yesterday's daily note")
+    lines.append("📝 [남은 할 일 (TODO)]")
     if todos:
-        for todo in todos:
-            lines.append(f"  * [ ] {todo}")
+        for todo in todos[:3]: # 너무 길면 깨질수 있으므로 3개까지만 제한
+            lines.append(f"  • [ ] {todo}")
+        if len(todos) > 3:
+            lines.append(f"  ...외 {len(todos)-3}건")
     else:
-        lines.append(f"  (no incomplete TODOs in Daily/{yesterday_str}.md)")
+        lines.append("  • 남은 일 없음. 완벽해요! ✨")
     lines.append("")
 
-    # ── Recommended start ───────────────────────────────────────────────────
-    lines.append("[Recommended] Suggested starting task")
+    lines.append("🚀 [추천 시작 포인트]")
     if most_recent:
-        proj_name = most_recent["name"]
-        last_ts_raw = most_recent.get("last_ts", "")
-        last_dt = _to_local(_parse_ts(last_ts_raw))
+        last_dt = _to_local(_parse_ts(most_recent.get("last_ts", "")))
         last_ts_str = last_dt.strftime("%H:%M") if last_dt else "?"
-        lines.append(f"  Most recent project: {proj_name} (yesterday {last_ts_str})")
+        lines.append(f"  • 최근 프로젝트: {most_recent['name']} ({last_ts_str})")
     if last_file:
-        fp = last_file.get("file_path", "")
-        # Show relative portion if possible
-        fp_display = Path(fp).name if fp else "?"
-        lines.append(f"  Last modified file: {fp_display}")
-        if fp:
-            lines.append(f"    ({fp})")
+        fp_display = Path(last_file.get("file_path", "")).name if last_file.get("file_path") else "?"
+        lines.append(f"  • 마지막 파일: {fp_display}")
     if not most_recent and not last_file:
-        lines.append("  (no previous activity found)")
+        lines.append("  • 이전 활동 없음")
     lines.append("")
 
-    # ── Today's status ──────────────────────────────────────────────────────
-    lines.append("[Today]")
+    lines.append("🌱 [오늘]")
     if earliest_today:
-        lines.append(f"  First activity today: {earliest_today}")
+        lines.append(f"  • 오늘 첫 시작: {earliest_today}")
     else:
-        lines.append("  No activity records yet for today")
-    lines.append("")
-
+        lines.append("  • 아직 오늘 활동 기록이 없어요. 시작해볼까요?")
+    
     return "\n".join(lines)
 
 

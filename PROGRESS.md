@@ -2,8 +2,8 @@
 
 ## 마지막 업데이트
 
-- 날짜: 2026-02-22 23:30
-- 작업 내용: Phase 7 바탕화면 캐릭터 에이전트 (PyQt6) 구현 완료
+- 날짜: 2026-02-23 08:35
+- 작업 내용: 새 컴퓨터 환경 셋업 완료 (config, DB, vault, Lottie assets)
 
 ---
 
@@ -108,11 +108,16 @@
 
 ---
 
-## 진행 중
+## 완료된 작업
 
-없음.
+- [x] 시스템 조사 및 기술 선택 (2026-02-21)
+...
+- [x] **Phase 4 브라우저 확장 및 파서 보완 완료 (2026-02-23)**
+  - `browser-extension/content/*.js` - SPA 대응 강화 (URL 감지 및 주기적 폴링 추가)
+  - `scripts/collectors/chatgpt_export.py` - `SensitiveFilter` 연동으로 민감 정보 마스킹 기능 추가
+  - `scripts/server.py` - 확장 프로그램 연동성 재확인 및 마스킹 로직 검증
 
----
+- [x] 새 컴퓨터 환경 셋업 완료 (config, DB, vault, Lottie assets) (2026-02-23)
 
 ## 다음 할 일
 

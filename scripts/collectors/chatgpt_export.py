@@ -32,13 +32,29 @@ try:
     from config import Config
     _cfg = Config()
     DB_PATH = _cfg.get_db_path()
+    _extra_patterns = _cfg.sensitive_patterns
 except Exception:
     DB_PATH = str(_PROJECT_ROOT / "data" / "worklog.db")
+    _extra_patterns = []
+
+try:
+    from processors.sensitive_filter import SensitiveFilter as _SF
+    _sensitive_filter = _SF(extra_patterns=_extra_patterns)
+except Exception:
+    _sensitive_filter = None  # type: ignore[assignment]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 MAX_TEXT = 10_000
+
+
+def _mask(text: str) -> str:
+    """Mask sensitive information using the shared filter."""
+    if not text or _sensitive_filter is None:
+        return text
+    masked, _ = _sensitive_filter.mask(text)
+    return masked
 
 
 def _ts_to_iso(ts) -> str:
@@ -94,7 +110,7 @@ def parse_export_file(filepath: str) -> list:
             if role != "user":
                 continue
 
-            prompt_text = _extract_text(msg.get("content", {}))
+            prompt_text = _mask(_extract_text(msg.get("content", {})))
             if not prompt_text.strip():
                 continue
 
@@ -106,7 +122,7 @@ def parse_export_file(filepath: str) -> list:
                 child = mapping.get(child_id, {})
                 child_msg = child.get("message", {})
                 if child_msg.get("author", {}).get("role") == "assistant":
-                    response_text = _extract_text(child_msg.get("content", {}))
+                    response_text = _mask(_extract_text(child_msg.get("content", {})))
                     break
 
             sessions.append({

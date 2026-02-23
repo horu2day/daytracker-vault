@@ -22,7 +22,7 @@
     );
     if (!userEls.length || !asstEls.length) return null;
 
-    const prompt   = userEls[userEls.length - 1].innerText.trim();
+    const prompt = userEls[userEls.length - 1].innerText.trim();
     const response = asstEls[asstEls.length - 1].innerText.trim();
     if (!prompt || !response) return null;
 
@@ -32,17 +32,17 @@
 
   function sendTurn(turn) {
     chrome.runtime.sendMessage({
-      type:     "AI_SESSION",
-      tool:     "claude",
-      prompt:   turn.prompt,
+      type: "AI_SESSION",
+      tool: "claude",
+      prompt: turn.prompt,
       response: turn.response,
-      url:      window.location.href,
+      url: window.location.href,
     });
     lastSentKey = turn.key;
   }
 
   let debounceTimer = null;
-  const observer = new MutationObserver(() => {
+  function attemptCapture() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       if (!isResponseComplete()) return;
@@ -51,8 +51,23 @@
         sendTurn(turn);
       }
     }, 1500);
-  });
+  }
 
+  const observer = new MutationObserver(attemptCapture);
   observer.observe(document.body, { childList: true, subtree: true });
-  console.debug("[DayTracker] Claude.ai logger active.");
+
+  // SPA 환경 대응 및 주기적 체크
+  let lastUrl = window.location.href;
+  setInterval(() => {
+    if (window.location.href !== lastUrl) {
+      lastUrl = window.location.href;
+      lastSentKey = null;
+      attemptCapture();
+    }
+    if (isResponseComplete()) {
+      attemptCapture();
+    }
+  }, 2000);
+
+  console.debug("[DayTracker] Claude.ai logger active (with polling backup).");
 })();

@@ -111,12 +111,15 @@ def _query_sessions_for_date(db_path: str, date_str: str) -> list[dict]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT id, timestamp, tool, project, project_id,
-                   prompt_text, response_text,
-                   input_tokens, output_tokens, session_id, uuid, cwd
-            FROM ai_prompts
-            WHERE timestamp >= ? AND timestamp < ?
-            ORDER BY timestamp ASC
+            SELECT ap.id, ap.timestamp, ap.tool,
+                   COALESCE(p.name, '') AS project,
+                   ap.project_id,
+                   ap.prompt_text, ap.response_text,
+                   ap.input_tokens, ap.output_tokens, ap.session_id
+            FROM ai_prompts ap
+            LEFT JOIN projects p ON ap.project_id = p.id
+            WHERE ap.timestamp >= ? AND ap.timestamp < ?
+            ORDER BY ap.timestamp ASC
             """,
             (utc_start, utc_end),
         ).fetchall()
@@ -129,14 +132,17 @@ def _query_session_by_id(db_path: str, session_id: str) -> list[dict]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT id, timestamp, tool, project, project_id,
-                   prompt_text, response_text,
-                   input_tokens, output_tokens, session_id, uuid, cwd
-            FROM ai_prompts
-            WHERE session_id = ? OR uuid = ?
-            ORDER BY timestamp ASC
+            SELECT ap.id, ap.timestamp, ap.tool,
+                   COALESCE(p.name, '') AS project,
+                   ap.project_id,
+                   ap.prompt_text, ap.response_text,
+                   ap.input_tokens, ap.output_tokens, ap.session_id
+            FROM ai_prompts ap
+            LEFT JOIN projects p ON ap.project_id = p.id
+            WHERE ap.session_id = ?
+            ORDER BY ap.timestamp ASC
             """,
-            (session_id, session_id),
+            (session_id,),
         ).fetchall()
     return [dict(r) for r in rows]
 

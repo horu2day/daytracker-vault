@@ -1,588 +1,420 @@
 """
 desktop-app/make_dog_lottie.py
 -------------------------------
-Python으로 상태별 강아지 Lottie JSON을 생성한다.
-rlottie-python은 'el' (ellipse) shape를 렌더링하지 못하므로
-베지어 패스('sh' type)로 모든 도형을 직접 그린다.
-
-생성 파일:
-  data/puppy_idle.json      - 살랑살랑 꼬리 + 눈 깜빡
-  data/puppy_working.json   - 빠른 꼬리 + 달리기 + 혀
-  data/puppy_alert.json     - 귀 쫑긋 + 느낌표 반짝
-  data/puppy_celebrate.json - 점프 + 별 파티클
-
-Usage:
-    python desktop-app/make_dog_lottie.py
-    python desktop-app/make_dog_lottie.py --out-dir data/
+Python으로 상태별 고품질 강아지 Lottie JSON을 생성한다.
+RLottie-python의 제약을 피하기 위해 베지어 패스로 모든 도형을 구성하며,
+각 상태별로 움직임 보간, 다관절 부모-자식 레이어링, 풍부한 액션을 적용합니다.
 """
-
 from __future__ import annotations
-import argparse
-import json
-import math
+import argparse, json, math
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# 색상 팔레트 (RGBA 0-1)
-# ---------------------------------------------------------------------------
-BODY_COLOR    = [0.87, 0.72, 0.53, 1]
-DARK_BROWN    = [0.42, 0.28, 0.14, 1]
-EAR_COLOR     = [0.75, 0.55, 0.35, 1]
-NOSE_COLOR    = [0.20, 0.10, 0.10, 1]
-EYE_COLOR     = [0.15, 0.10, 0.08, 1]
+# --- 고품질 팔레트 ---
+BODY_COLOR    = [0.85, 0.55, 0.25, 1]  # 따뜻한 브라운
+BELLY_COLOR   = [1.00, 0.92, 0.80, 1]  # 밝은 톤 (주둥이, 가슴, 발)
+EAR_COLOR     = [0.70, 0.40, 0.15, 1]  # 귀
+SPOT_COLOR    = [0.70, 0.40, 0.15, 1]  # 눈 주변 얼룩
+NOSE_COLOR    = [0.15, 0.10, 0.10, 1]  # 코
+EYE_COLOR     = [0.15, 0.10, 0.10, 1]  # 눈
 WHITE         = [1.00, 1.00, 1.00, 1]
-TAIL_COLOR    = [0.78, 0.60, 0.40, 1]
-TONGUE_COLOR  = [0.95, 0.40, 0.50, 1]
+TAIL_COLOR    = [0.85, 0.55, 0.25, 1]
+TONGUE_COLOR  = [0.95, 0.40, 0.50, 1]  # 혀
+COLLAR_COLOR  = [0.90, 0.20, 0.25, 1]  # 빨간 목줄
+TAG_COLOR     = [1.00, 0.80, 0.10, 1]  # 이름표 (금색)
+
+SHADOW_COLOR  = [0.0, 0.0, 0.0, 0.08]  # 그림자
+
+ALERT_RED     = [0.95, 0.25, 0.20, 1]
 STAR_YELLOW   = [1.00, 0.85, 0.20, 1]
 STAR_PINK     = [1.00, 0.50, 0.80, 1]
-ALERT_RED     = [0.95, 0.25, 0.20, 1]
 
-# 배경 원 색상 — 어두운 바탕에서도 캐릭터가 잘 보이도록
-# (상태별로 색상 구분)
-BG_IDLE       = [0.98, 0.96, 0.88, 0.92]   # 크림색, 92% 불투명
-BG_WORKING    = [0.88, 0.98, 0.88, 0.92]   # 연두색
-BG_ALERT      = [1.00, 0.92, 0.82, 0.92]   # 연주황
-BG_CELEBRATE  = [0.95, 0.88, 1.00, 0.92]   # 연보라
-BG_SLEEPING   = [0.85, 0.90, 0.98, 0.92]   # 연파랑
+# --- 상태별 배경 ---
+BG_IDLE       = [0.98, 0.96, 0.88, 0.92]
+BG_WORKING    = [0.88, 0.98, 0.88, 0.92]
+BG_ALERT      = [1.00, 0.92, 0.82, 0.92]
+BG_CELEBRATE  = [0.95, 0.88, 1.00, 0.92]
+BG_SLEEPING   = [0.85, 0.90, 0.98, 0.92]
 
+KAPPA = 0.5519150244935105
 
 # ---------------------------------------------------------------------------
-# 베지어 패스 헬퍼
+# 베지어 헬퍼
 # ---------------------------------------------------------------------------
-
-KAPPA = 0.5519150244935105   # 원을 4개 큐빅 세그먼트로 근사하는 상수
-
 def oval_path(cx: float, cy: float, rx: float, ry: float) -> dict:
-    """타원 베지어 경로."""
     kx, ky = KAPPA * rx, KAPPA * ry
     return {
-        "v": [
-            [cx,      cy - ry],
-            [cx + rx, cy     ],
-            [cx,      cy + ry],
-            [cx - rx, cy     ],
-        ],
+        "v": [[cx, cy-ry], [cx+rx, cy], [cx, cy+ry], [cx-rx, cy]],
         "i": [[-kx, 0], [0, -ky], [kx, 0], [0, ky]],
         "o": [[kx, 0], [0, ky], [-kx, 0], [0, -ky]],
-        "c": True,
+        "c": True
     }
-
 
 def rect_path(cx: float, cy: float, w: float, h: float, r: float = 0) -> dict:
-    """둥근 사각형 베지어 경로 (r=모서리 반지름)."""
-    r = min(r, w / 2, h / 2)
-    x0, x1 = cx - w / 2, cx + w / 2
-    y0, y1 = cy - h / 2, cy + h / 2
+    r = min(r, w/2, h/2)
+    x0, x1 = cx - w/2, cx + w/2
+    y0, y1 = cy - h/2, cy + h/2
     k = KAPPA * r
     if r == 0:
-        return {
-            "v": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
-            "i": [[0, 0], [0, 0], [0, 0], [0, 0]],
-            "o": [[0, 0], [0, 0], [0, 0], [0, 0]],
-            "c": True,
-        }
+        return {"v": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                "i": [[0,0], [0,0], [0,0], [0,0]], "o": [[0,0], [0,0], [0,0], [0,0]], "c": True}
     return {
-        "v": [
-            [x0 + r, y0], [x1 - r, y0],
-            [x1, y0 + r], [x1, y1 - r],
-            [x1 - r, y1], [x0 + r, y1],
-            [x0, y1 - r], [x0, y0 + r],
-        ],
-        "i": [
-            [0, 0],  [-k, 0],
-            [0, -k], [0, 0],
-            [0, 0],  [k, 0],
-            [0, k],  [0, 0],
-        ],
-        "o": [
-            [k, 0],  [0, 0],
-            [0, 0],  [0, k],
-            [-k, 0], [0, 0],
-            [0, 0],  [0, -k],
-        ],
-        "c": True,
+        "v": [[x0+r, y0], [x1-r, y0], [x1, y0+r], [x1, y1-r],
+              [x1-r, y1], [x0+r, y1], [x0, y1-r], [x0, y0+r]],
+        "i": [[0,0], [-k,0], [0,-k], [0,0], [0,0], [k,0], [0,k], [0,0]],
+        "o": [[k,0], [0,0], [0,0], [0,k], [-k,0], [0,0], [0,0], [0,-k]],
+        "c": True
     }
 
-
-def star_path(cx: float, cy: float, r_outer: float, r_inner: float, n: int = 5) -> dict:
-    """별 모양 경로."""
-    verts, ins, outs = [], [], []
-    for i in range(n * 2):
-        angle = math.pi * i / n - math.pi / 2
-        r = r_outer if i % 2 == 0 else r_inner
-        verts.append([cx + r * math.cos(angle), cy + r * math.sin(angle)])
-        ins.append([0, 0])
-        outs.append([0, 0])
-    return {"v": verts, "i": ins, "o": outs, "c": True}
-
+def star_path(cx: float, cy: float, ro: float, ri: float, n: int=5) -> dict:
+    v, i, o = [], [], []
+    for j in range(n*2):
+        a = math.pi * j / n - math.pi / 2
+        r = ro if j%2==0 else ri
+        v.append([cx + r*math.cos(a), cy + r*math.sin(a)])
+        i.append([0,0]); o.append([0,0])
+    return {"v": v, "i": i, "o": o, "c": True}
 
 # ---------------------------------------------------------------------------
-# Lottie 빌더 헬퍼
+# 로티 빌더
 # ---------------------------------------------------------------------------
+def static(v):
+    return {"a": 0, "k": v}
 
-def static(value) -> dict:
-    return {"a": 0, "k": value}
+def animated(kfs):
+    return {"a": 1, "k": kfs}
 
-
-def animated(keyframes: list) -> dict:
-    return {"a": 1, "k": keyframes}
-
-
-def kf(t: int, s, e=None, ei: float = 0.5, eo: float = 0.5) -> dict:
-    """키프레임 하나. e=None이면 홀드."""
-    frame = {
-        "t": t,
-        "s": s if isinstance(s, list) else [s],
-        "i": {"x": [ei], "y": [1]},
-        "o": {"x": [eo], "y": [0]},
-    }
+def kf(t: int, s, e=None, ease="smooth") -> dict:
+    if type(s) not in (list, tuple): s = [s]
+    frame = {"t": t, "s": s}
     if e is not None:
-        frame["e"] = e if isinstance(e, list) else [e]
+        if type(e) not in (list, tuple): e = [e]
+        frame["e"] = e
+        if ease == "smooth":
+            frame["i"] = {"x": [0.33], "y": [1]}
+            frame["o"] = {"x": [0.33], "y": [0]}
+        elif ease == "linear":
+            frame["i"] = {"x": [0], "y": [0]}
+            frame["o"] = {"x": [1], "y": [1]}
     return frame
 
+def make_oscillation(n_frames, max_t, val1, val2, ease="smooth"):
+    kfs = []
+    for t in range(0, max_t + 1, n_frames):
+        idx = t // n_frames
+        vs = val1 if idx%2==0 else val2
+        ve = val2 if idx%2==0 else val1
+        
+        if type(vs) not in (list, tuple): vs = [vs]
+        
+        if t == max_t:
+            kfs.append({"t": t, "s": vs})
+        else:
+            kfs.append(kf(t, vs, ve, ease))
+    if kfs[-1]["t"] < max_t:
+        kfs.append({"t": max_t, "s": kfs[-1]["e"]})
+    return kfs
 
-def shape_group(nm: str, items: list) -> dict:
-    """shapes 배열 안에 들어가는 gr(group)."""
+def path_shape(pd):   return {"ty": "sh", "nm": "path", "ks": static(pd)}
+def fill_shape(c, o=100): return {"ty": "fl", "nm": "fill", "c": static(c), "o": static(o), "r": 1}
+
+def shape_group(nm, items):
     return {
-        "ty": "gr",
-        "nm": nm,
+        "ty": "gr", "nm": nm,
         "it": items + [{
-            "ty": "tr",
-            "p": static([0, 0]),
-            "a": static([0, 0]),
-            "s": static([100, 100]),
-            "r": static(0),
-            "o": static(100),
-            "sk": static(0),
-            "sa": static(0),
-        }],
+            "ty": "tr", "p": static([0,0]), "a": static([0,0]),
+            "s": static([100,100]), "r": static(0), "o": static(100), "sk": static(0), "sa": static(0)
+        }]
     }
 
+def solid_oval(nm, cx, cy, rx, ry, col):
+    return shape_group(nm, [path_shape(oval_path(cx, cy, rx, ry)), fill_shape(col)])
 
-def path_shape(path_data: dict) -> dict:
-    return {"ty": "sh", "nm": "path", "ks": static(path_data)}
+def solid_rect(nm, cx, cy, w, h, r, col):
+    return shape_group(nm, [path_shape(rect_path(cx, cy, w, h, r)), fill_shape(col)])
 
-
-def fill_shape(color: list, opacity: float = 100) -> dict:
-    return {"ty": "fl", "nm": "fill", "c": static(color), "o": static(opacity), "r": 1}
-
-
-def stroke_shape(color: list, width: float = 2.0) -> dict:
-    return {"ty": "st", "nm": "stroke", "c": static(color), "w": static(width),
-            "o": static(100), "lc": 2, "lj": 2}
-
-
-def solid_oval(nm: str, cx: float, cy: float, rx: float, ry: float,
-               fill: list, stroke: list = None, sw: float = 2.0) -> dict:
-    items = [path_shape(oval_path(cx, cy, rx, ry)), fill_shape(fill)]
-    if stroke:
-        items.append(stroke_shape(stroke, sw))
-    return shape_group(nm, items)
-
-
-def layer_base(ind: int, nm: str, op: int,
-               px=100, py=100,
-               pos_kf=None, rot_kf=None, scale_kf=None,
-               opacity_kf=None, opacity: float = 100) -> dict:
-    pos_prop  = animated(pos_kf)  if pos_kf  else static([px, py, 0])
-    rot_prop  = animated(rot_kf)  if rot_kf  else static(0)
-    scl_prop  = animated(scale_kf) if scale_kf else static([100, 100, 100])
-    opa_prop  = animated(opacity_kf) if opacity_kf else static(opacity)
-    return {
+def layer_base(ind: int, nm: str, op: int, px=0, py=0,
+               pos_kf=None, rot_kf=None, scl_kf=None, opa_kf=None, parent: int=None) -> dict:
+    lyr = {
         "ind": ind, "ty": 4, "nm": nm,
         "ip": 0, "op": op, "st": 0, "bm": 0,
         "ks": {
-            "p": pos_prop,
+            "p": animated(pos_kf) if pos_kf else static([px, py, 0]),
             "a": static([0, 0, 0]),
-            "s": scl_prop,
-            "r": rot_prop,
-            "o": opa_prop,
+            "s": animated(scl_kf) if scl_kf else static([100, 100, 100]),
+            "r": animated(rot_kf) if rot_kf else static(0),
+            "o": animated(opa_kf) if opa_kf else static(100),
         },
-        "shapes": [],
+        "shapes": []
     }
+    if parent is not None:
+        lyr["parent"] = parent
+    return lyr
 
+def bg_circle_layer(ind: int, op: int, color: list) -> dict:
+    layer = layer_base(ind, "bg_circle", op, px=100, py=100)
+    layer["shapes"] = [shape_group("bg", [path_shape(oval_path(0, 0, 90, 90)), fill_shape(color)])]
+    return layer
 
 def lottie_doc(nm: str, fr: int, op: int, layers: list) -> dict:
     return {
-        "v": "5.5.7",
-        "meta": {"g": "make_dog_lottie.py"},
-        "fr": fr, "ip": 0, "op": op,
-        "w": 200, "h": 200,
-        "nm": nm, "ddd": 0,
-        "assets": [], "layers": layers,
+        "v": "5.5.7", "meta": {"g": "make_dog_lottie.py"},
+        "fr": fr, "ip": 0, "op": op, "w": 200, "h": 200, "nm": nm, "ddd": 0,
+        "assets": [], "layers": layers
     }
 
-
 # ---------------------------------------------------------------------------
-# 강아지 파트별 shapes (좌표는 레이어 로컬 기준)
+# 고품질 캐릭터 부위 그리기
 # ---------------------------------------------------------------------------
+def shadow_shapes():
+    return [solid_oval("shadow", 0, 0, 55, 10, SHADOW_COLOR)]
 
-def body_shapes() -> list:
-    return [solid_oval("body", 0, 0, 38, 26, BODY_COLOR, DARK_BROWN)]
+def tail_shapes():
+    return [solid_oval("tail", 0, -18, 10, 28, TAIL_COLOR)]
 
-
-def head_shapes() -> list:
-    return [solid_oval("head", 0, 0, 30, 28, BODY_COLOR, DARK_BROWN)]
-
-
-def ear_shapes() -> list:
+def leg_shapes():
+    DARK_LEG = [0.75, 0.45, 0.15, 1]
     return [
-        solid_oval("left_ear",  -20, -14, 12, 18, EAR_COLOR, DARK_BROWN),
-        solid_oval("right_ear",  20, -14, 12, 18, EAR_COLOR, DARK_BROWN),
+        # 뒷다리
+        solid_rect("leg_rl", -18, 8, 12, 22, 6, DARK_LEG),
+        solid_rect("leg_rr", 18, 8, 12, 22, 6, DARK_LEG),
+        # 앞다리
+        solid_rect("leg_fl", -10, 14, 14, 25, 6, BODY_COLOR),
+        solid_rect("leg_fr", 10, 14, 14, 25, 6, BODY_COLOR),
+        # 앞발
+        solid_oval("paw_fl", -10, 25, 16, 8, BELLY_COLOR),
+        solid_oval("paw_fr", 10, 25, 16, 8, BELLY_COLOR),
     ]
 
+def body_shapes():
+    return [
+        solid_oval("body_main", 0, 5, 45, 38, BODY_COLOR),
+        solid_oval("body_belly", 0, 16, 30, 24, BELLY_COLOR),
+    ]
 
-def face_shapes(eye_squint: bool = False) -> list:
-    """눈 + 코. eye_squint=True이면 행복한 눈(scaleY 0.4)."""
-    ey = 0.4 if eye_squint else 1.0
+def collar_shapes():
+    return [
+        solid_rect("collar_band", 0, -2, 38, 8, 4, COLLAR_COLOR),
+        solid_oval("tag", 0, 5, 6, 6, TAG_COLOR),
+        solid_oval("tag_hole", 0, 3, 1.5, 1.5, [0,0,0,0.5]),
+    ]
+
+def head_shapes():
+    return [
+        solid_oval("head_base", 0, 0, 42, 36, BODY_COLOR),
+        solid_oval("spot", -16, -6, 15, 18, SPOT_COLOR),
+    ]
+
+def ear_shapes():
+    return [solid_oval("ear", 0, 0, 12, 24, EAR_COLOR)]
+
+def face_shapes(eye_squint, eye_close):
     shapes = [
-        # 눈 흰자 (생략 — 어두운 눈으로 단순화)
-        solid_oval("left_eye",   -13, -4, 6,  int(6*ey)+1, EYE_COLOR),
-        solid_oval("right_eye",   13, -4, 6,  int(6*ey)+1, EYE_COLOR),
-        # 하이라이트
-        solid_oval("left_hi",   -10, -7, 2, 2, WHITE),
-        solid_oval("right_hi",   16, -7, 2, 2, WHITE),
-        # 코
-        solid_oval("nose",        0,  6, 8,  5, NOSE_COLOR),
+        # 주둥이와 코
+        solid_oval("muzzle", 0, 10, 22, 14, BELLY_COLOR),
+        solid_oval("nose", 0, 4, 9, 6, NOSE_COLOR),
+        solid_oval("nose_shine", -2, 3, 2, 1, WHITE),
     ]
+    if eye_close:
+        shapes.append(solid_rect("left_eye",  -16, -2, 10, 2, 1, EYE_COLOR))
+        shapes.append(solid_rect("right_eye",  16, -2, 10, 2, 1, EYE_COLOR))
+    elif eye_squint:
+        shapes.append(solid_oval("left_eye",  -16, -4, 6, 2, EYE_COLOR))
+        shapes.append(solid_oval("right_eye",  16, -4, 6, 2, EYE_COLOR))
+    else:
+        shapes.append(solid_oval("left_eye",  -16, -4, 5, 8, EYE_COLOR))
+        shapes.append(solid_oval("right_eye",  16, -4, 5, 8, EYE_COLOR))
+        shapes.append(solid_oval("left_hi",  -18, -6, 2, 3, WHITE))
+        shapes.append(solid_oval("right_hi",  14, -6, 2, 3, WHITE))
     return shapes
 
+def tongue_shapes():
+    # 혀
+    return [solid_oval("tongue", 0, 18, 8, 14, TONGUE_COLOR)]
 
-def tail_shapes() -> list:
-    # 위로 굽은 꼬리: 긴 타원
-    return [solid_oval("tail", 0, -18, 7, 20, TAIL_COLOR, DARK_BROWN)]
+# ---------------------------------------------------------------------------
+# 중앙 장면 코디네이터
+# ---------------------------------------------------------------------------
+def make_dog_scene(name, op, bg_color, anim_type):
+    layers = []
+    layers.append(bg_circle_layer(99, op, bg_color))
+    
+    face_sq = False; face_cl = False; show_tongue = False
+    shadow_scale = [kf(0, [100,100,100])]
+    tail_rot = [kf(0, [0])]
+    body_pos = [kf(0, [100, 115, 0])]
+    head_pos = [kf(0, [100, 68, 0])]
+    leg_pos = [kf(0, [100, 115, 0])]
+    ear_rot = None
+    blink_scale = None
 
+    if anim_type == "idle":
+        # 숨쉬며 가볍게 보빙, 눈깜박임
+        shadow_scale = make_oscillation(45, op, [100,100,100], [95,95,100])
+        tail_rot = make_oscillation(15, op, 30, -10)
+        body_pos = make_oscillation(45, op, [100, 115, 0], [100, 118, 0])
+        head_pos = make_oscillation(45, op, [100, 68, 0], [100, 72, 0])
+        blink_scale = [kf(0, [100,100,100]), kf(60, [100,100,100], [100,10,100], "linear"), 
+                       kf(64, [100,10,100], [100,100,100], "linear"), {"t": op, "s": [100,100,100]}]
 
-def leg_shapes() -> list:
-    return [
-        solid_oval("leg_fl", -23, 10, 6, 11, BODY_COLOR, DARK_BROWN, 1.5),
-        solid_oval("leg_fr",  -8, 10, 6, 11, BODY_COLOR, DARK_BROWN, 1.5),
-        solid_oval("leg_rl",   8, 10, 6, 11, BODY_COLOR, DARK_BROWN, 1.5),
-        solid_oval("leg_rr",  23, 10, 6, 11, BODY_COLOR, DARK_BROWN, 1.5),
-    ]
+    elif anim_type == "working":
+        # 헤헥거리며 집중(작업)
+        face_sq = True; show_tongue = True
+        tail_rot = make_oscillation(6, op, 45, -15)
+        leg_pos = make_oscillation(4, op, [100, 115, 0], [100, 110, 0])
+        
+        # 혀만 별도 헐떡임
+        t_scl = make_oscillation(4, op, [100,100,100], [100,120,100])
+        t_lyr = layer_base(4, "tongue", op, px=0, py=0, scl_kf=t_scl, parent=8)
+        t_lyr["ks"]["a"] = static([0, 16, 0])
+        t_lyr["shapes"] = tongue_shapes()
+        layers.append(t_lyr)
 
+    elif anim_type == "alert":
+        # 깜짝 놀라며 귀가 쫑긋 서고 알림표시!
+        head_pos = [kf(0, [100, 68, 0], [100, 58, 0]), kf(8, [100, 58, 0], [100, 63, 0]), {"t":op, "s": [100,63,0]}]
+        ear_rot = [kf(0, [0], [50]), kf(8, [50], [40]), {"t":op, "s": [40]}]
+        
+        # 빨간색 느낌표 팝업
+        alert_scale = [
+            kf(0,  [0,0,100], [130,130,100]), kf(7,  [130,130,100], [90,90,100]),
+            kf(11, [90,90,100], [110,110,100]), kf(15, [110,110,100], [100,100,100]),
+            kf(35, [100,100,100], [0,0,100]), {"t": op, "s": [0,0,100]}
+        ]
+        ring = layer_base(2, "alert_ring", op, px=145, py=35, scl_kf=alert_scale)
+        ring["shapes"] = [
+            shape_group("ring", [path_shape(oval_path(0, 0, 18, 18)), fill_shape(ALERT_RED)]),
+            shape_group("bar", [path_shape(rect_path(0, -3, 5, 12, 2)), fill_shape(WHITE)]),
+            shape_group("dot", [path_shape(oval_path(0, 7, 2.5, 2.5)), fill_shape(WHITE)]),
+        ]
+        layers.append(ring)
 
-def tongue_shapes() -> list:
-    return [
-        solid_oval("tongue", 0, 14, 7, 9, TONGUE_COLOR),
-    ]
-
-
-def bg_circle_layer(ind: int, op: int, color: list) -> dict:
-    """어두운 바탕에서도 캐릭터가 잘 보이도록 뒤에 깔리는 둥근 배경 레이어."""
-    layer = layer_base(ind, "bg_circle", op, px=100, py=100)
-    layer["shapes"] = [
-        shape_group("bg", [
-            path_shape(oval_path(0, 0, 90, 90)),
-            fill_shape(color),
+    elif anim_type == "celebrate":
+        # 펄쩍펄쩍 점프 + 별 파티클
+        face_sq = True; show_tongue = True
+        jy = -35
+        body_pos = make_oscillation(15, op, [100, 115, 0], [100, 115+jy, 0])
+        head_pos = make_oscillation(15, op, [100,  68, 0], [100,  68+jy, 0])
+        leg_pos  = make_oscillation(15, op, [100, 115, 0], [100, 115+jy, 0])
+        
+        shadow_scale = make_oscillation(15, op, [100,100,100], [40,40,100])
+        tail_rot = make_oscillation(5, op, 45, -20)
+        ear_rot = make_oscillation(15, op, [0], [60])
+        
+        # 별 생성
+        def mk_star(ind, cx, cy, dly, clr):
+            ap = min(dly + 6, op - 1)
+            fd = min(dly + 22, op)
+            o_kf = [kf(max(0, dly-1), [0], [100], "linear"), kf(ap, [100], [100], "linear"), 
+                    kf(fd-4, [100], [0], "linear"), {"t": fd, "s": [0]}]
+            s_kf = [kf(max(0, dly-1), [0,0,100], [120,120,100]), kf(ap, [120,120,100], [80,80,100]), 
+                    kf(ap+4, [80,80,100], [100,100,100]), {"t": op, "s": [0,0,100]}]
+            lyr = layer_base(ind, "star", op, px=cx, py=cy, scl_kf=s_kf, opa_kf=o_kf)
+            lyr["shapes"] = [shape_group("star", [path_shape(star_path(0,0,12,5,5)), fill_shape(clr)])]
+            return lyr
+        
+        layers.extend([
+            mk_star(3,  55, 55,  0, STAR_YELLOW), mk_star(3, 142, 42,  8, STAR_YELLOW),
+            mk_star(3, 155, 85, 16, STAR_PINK),   mk_star(3,  38, 82, 22, STAR_YELLOW),
+            mk_star(3, 100, 15,  4, STAR_PINK),
         ])
-    ]
-    return layer
+        
+        # 혀 고정
+        t_lyr = layer_base(4, "tongue", op, px=0, py=0, parent=8)
+        t_lyr["shapes"] = tongue_shapes()
+        layers.append(t_lyr)
 
+    elif anim_type == "sleeping":
+        face_cl = True
+        body_pos = make_oscillation(60, op, [100, 115, 0], [100, 118, 0])
+        head_pos = make_oscillation(60, op, [100,  68, 0], [100,  72, 0])
+        shadow_scale = make_oscillation(60, op, [100,100,100], [95,95,100])
+        tail_rot = [kf(0, [10])]
 
-# ---------------------------------------------------------------------------
-# idle: 꼬리 흔들기 + 눈 깜빡 + 가볍게 보빙
-# ---------------------------------------------------------------------------
+    # --- 공통 레이어 빌드 ---
+    shadow = layer_base(20, "shadow", op, px=100, py=148, scl_kf=shadow_scale)
+    shadow["shapes"] = shadow_shapes()
+    layers.append(shadow)
 
-def make_idle(op: int = 90) -> dict:
-    # 꼬리 좌우
-    tail_rot = [
-        kf(0,  [30], [-12]),
-        kf(15, [-12], [30]),
-        kf(30, [30], [-12]),
-        kf(45, [-12], [30]),
-        kf(60, [30], [-12]),
-        kf(75, [-12], [30]),
-        {"t": op, "s": [30]},
-    ]
-    # 머리/몸 위아래 (22프레임 주기)
-    head_pos = [
-        kf(0,  [100, 68, 0], [100, 64, 0]),
-        kf(22, [100, 64, 0], [100, 68, 0]),
-        kf(45, [100, 68, 0], [100, 64, 0]),
-        kf(67, [100, 64, 0], [100, 68, 0]),
-        {"t": op, "s": [100, 68, 0]},
-    ]
-    body_pos = [
-        kf(0,  [100, 112, 0], [100, 108, 0]),
-        kf(22, [100, 108, 0], [100, 112, 0]),
-        kf(45, [100, 112, 0], [100, 108, 0]),
-        kf(67, [100, 108, 0], [100, 112, 0]),
-        {"t": op, "s": [100, 112, 0]},
-    ]
-
-    # 눈 깜빡: 프레임 60-64에 scaleY 축소
-    # 구현 방법: 눈을 별도 레이어로 분리, scaleY 애니메이션
-    blink_scale = [
-        kf(0,  [100, 100, 100], [100, 100, 100]),
-        kf(60, [100, 100, 100], [100,   8, 100]),
-        kf(62, [100,   8, 100], [100, 100, 100]),
-        kf(64, [100, 100, 100], [100, 100, 100]),
-        {"t": op, "s": [100, 100, 100]},
-    ]
-
-    # 레이어 빌드
-    tail  = layer_base(1, "tail",  op, px=148, py=106, rot_kf=tail_rot)
+    tail = layer_base(15, "tail", op, px=135, py=110, rot_kf=tail_rot)
+    tail["ks"]["a"] = static([0, 10, 0])
     tail["shapes"] = tail_shapes()
+    layers.append(tail)
 
-    body  = layer_base(2, "body",  op, pos_kf=body_pos)
-    body["shapes"] = body_shapes()
-
-    legs  = layer_base(3, "legs",  op, px=100, py=128)
+    legs = layer_base(12, "legs", op, pos_kf=leg_pos)
     legs["shapes"] = leg_shapes()
+    layers.append(legs)
 
-    ears  = layer_base(4, "ears",  op, px=100, py=68)
-    ears["shapes"] = ear_shapes()
-
-    head  = layer_base(5, "head",  op, pos_kf=head_pos)
-    head["shapes"] = head_shapes()
-
-    # 눈 레이어 분리 (scaleY 애니메이션)
-    eyes  = layer_base(6, "eyes",  op, px=100, py=68, scale_kf=blink_scale)
-    eyes["ks"]["a"] = static([0, -4, 0])   # 눈 위치 기준점
-    eyes["shapes"] = [
-        solid_oval("left_eye",  -13, -4, 6, 6, EYE_COLOR),
-        solid_oval("right_eye",  13, -4, 6, 6, EYE_COLOR),
-        solid_oval("left_hi",  -10, -7, 2, 2, WHITE),
-        solid_oval("right_hi",  16, -7, 2, 2, WHITE),
-        solid_oval("nose",        0,  6, 8, 5, NOSE_COLOR),
-    ]
-
-    bg = bg_circle_layer(99, op, BG_IDLE)
-    return lottie_doc("puppy_idle", 30, op,
-                      [tail, body, legs, ears, head, eyes, bg])
-
-
-# ---------------------------------------------------------------------------
-# working: 빠른 꼬리 + 달리는 다리 + 혀
-# ---------------------------------------------------------------------------
-
-def make_working(op: int = 60) -> dict:
-    # 꼬리 빠르게 (6프레임 주기)
-    tail_rot = []
-    for i in range(op // 6 + 2):
-        t = i * 6
-        if t >= op:
-            break
-        angle = [40] if i % 2 == 0 else [-12]
-        nxt   = [-12] if i % 2 == 0 else [40]
-        tail_rot.append(kf(t, angle, nxt))
-    tail_rot.append({"t": op, "s": [40]})
-
-    # 다리 달리기 (4프레임 주기) - Y 위치 교대
-    def make_leg_pos(offset: int):
-        pos = []
-        for i in range(op // 4 + 2):
-            t = i * 4 + offset
-            if t >= op:
-                break
-            y  = [100, 125, 0] if i % 2 == 0 else [100, 132, 0]
-            yn = [100, 132, 0] if i % 2 == 0 else [100, 125, 0]
-            pos.append(kf(t, y, yn))
-        pos.append({"t": op, "s": [100, 125, 0]})
-        return pos
-
-    tail  = layer_base(1, "tail",     op, px=148, py=106, rot_kf=tail_rot)
-    tail["shapes"] = tail_shapes()
-
-    body  = layer_base(2, "body",     op, px=100, py=112)
+    body = layer_base(10, "body", op, pos_kf=body_pos)
     body["shapes"] = body_shapes()
+    layers.append(body)
 
-    legs  = layer_base(3, "legs",     op, pos_kf=make_leg_pos(0))
-    legs["shapes"] = leg_shapes()
-
-    ears  = layer_base(4, "ears",     op, px=100, py=68)
-    ears["shapes"] = ear_shapes()
-
-    head  = layer_base(5, "head",     op, px=100, py=68)
+    # 헤드 중심점
+    head = layer_base(8, "head", op, pos_kf=head_pos)
     head["shapes"] = head_shapes()
+    layers.append(head)
 
-    eyes  = layer_base(6, "eyes",     op, px=100, py=68)
-    eyes["shapes"] = face_shapes(eye_squint=True)  # 반달 눈
+    # 목줄 (head를 따라가도록 parent=8)
+    collar = layer_base(9, "collar", op, px=0, py=26, parent=8)
+    collar["shapes"] = collar_shapes()
+    layers.append(collar)
 
-    tongue = layer_base(7, "tongue",  op, px=100, py=76)
-    tongue["shapes"] = tongue_shapes()
+    l_ear_rot, r_ear_rot = None, None
+    if ear_rot:
+        l_ear_rot = []
+        r_ear_rot = []
+        for f in ear_rot:
+            lf = f.copy(); rf = f.copy(); lf["s"] = [f["s"][0]]; rf["s"] = [-f["s"][0]]
+            if "e" in f: lf["e"] = [f["e"][0]]; rf["e"] = [-f["e"][0]]
+            l_ear_rot.append(lf); r_ear_rot.append(rf)
 
-    bg = bg_circle_layer(99, op, BG_WORKING)
-    return lottie_doc("puppy_working", 30, op,
-                      [tongue, tail, body, legs, ears, head, eyes, bg])
+    left_ear = layer_base(7, "left_ear", op, px=-18, py=-8, rot_kf=l_ear_rot, parent=8)
+    left_ear["ks"]["a"] = static([0, -12, 0])
+    left_ear["shapes"] = ear_shapes()
+    
+    right_ear = layer_base(6, "right_ear", op, px=18, py=-8, rot_kf=r_ear_rot, parent=8)
+    right_ear["ks"]["a"] = static([0, -12, 0])
+    right_ear["shapes"] = ear_shapes()
+    
+    layers.extend([left_ear, right_ear])
 
+    face_layer = layer_base(5, "face", op, px=0, py=0, scl_kf=blink_scale, parent=8)
+    face_layer["shapes"] = face_shapes(face_sq, face_cl)
+    layers.append(face_layer)
 
-# ---------------------------------------------------------------------------
-# alert: 귀 쫑긋 + 느낌표 원 반짝
-# ---------------------------------------------------------------------------
-
-def make_alert(op: int = 45) -> dict:
-    # 귀 스케일 Y 살짝 위로 (높이 늘리기로 쫑긋 표현)
-    ear_scale = [
-        kf(0, [100, 100, 100], [100, 130, 100]),
-        kf(8, [100, 130, 100], [100, 130, 100]),
-        {"t": op, "s": [100, 130, 100]},
-    ]
-
-    # 느낌표 원 (팝업)
-    alert_scale = [
-        kf(0,  [0,   0,   100], [130, 130, 100]),
-        kf(7,  [130, 130, 100], [90,  90,  100]),
-        kf(11, [90,  90,  100], [110, 110, 100]),
-        kf(15, [110, 110, 100], [100, 100, 100]),
-        kf(35, [100, 100, 100], [0,   0,   100]),
-        {"t": op, "s": [0, 0, 100]},
-    ]
-    alert_ring = layer_base(8, "alert_ring", op, px=158, py=48,
-                            scale_kf=alert_scale)
-    alert_ring["ks"]["a"] = static([0, 0, 0])
-    alert_ring["shapes"] = [
-        shape_group("ring", [
-            path_shape(oval_path(0, 0, 14, 14)),
-            fill_shape(ALERT_RED),
-        ]),
-        shape_group("excl_bar", [
-            path_shape(rect_path(0, -3, 4, 9, 2)),
-            fill_shape(WHITE),
-        ]),
-        shape_group("excl_dot", [
-            path_shape(oval_path(0, 6, 2, 2)),
-            fill_shape(WHITE),
-        ]),
-    ]
-
-    tail  = layer_base(1, "tail",  op, px=148, py=106)
-    tail["shapes"] = tail_shapes()
-
-    body  = layer_base(2, "body",  op, px=100, py=112)
-    body["shapes"] = body_shapes()
-
-    legs  = layer_base(3, "legs",  op, px=100, py=128)
-    legs["shapes"] = leg_shapes()
-
-    ears  = layer_base(4, "ears",  op, px=100, py=68, scale_kf=ear_scale)
-    ears["ks"]["a"] = static([0, 8, 0])   # 귀 아래쪽 기준점으로 위로 자람
-    ears["shapes"] = ear_shapes()
-
-    head  = layer_base(5, "head",  op, px=100, py=68)
-    head["shapes"] = head_shapes()
-
-    eyes  = layer_base(6, "eyes",  op, px=100, py=68)
-    eyes["shapes"] = face_shapes()
-
-    bg = bg_circle_layer(99, op, BG_ALERT)
-    return lottie_doc("puppy_alert", 30, op,
-                      [alert_ring, tail, body, legs, ears, head, eyes, bg])
-
-
-# ---------------------------------------------------------------------------
-# celebrate: 점프 + 별 파티클
-# ---------------------------------------------------------------------------
-
-def make_celebrate(op: int = 75) -> dict:
-    # 점프 (위아래 2회)
-    def jump_pos(base_y: float):
-        return [
-            kf(0,  [100, base_y,      0], [100, base_y - 55, 0], eo=0.1),
-            kf(18, [100, base_y - 55, 0], [100, base_y,      0], ei=0.1),
-            kf(38, [100, base_y,      0], [100, base_y - 55, 0], eo=0.1),
-            kf(56, [100, base_y - 55, 0], [100, base_y,      0], ei=0.1),
-            {"t": op, "s": [100, base_y, 0]},
-        ]
-
-    # 꼬리 매우 빠르게
-    tail_rot = []
-    for i in range(op // 5 + 2):
-        t = i * 5
-        if t >= op:
-            break
-        tail_rot.append(kf(t, [40] if i%2==0 else [-15],
-                             [-15] if i%2==0 else [40]))
-    tail_rot.append({"t": op, "s": [40]})
-
-    # 별 파티클 생성 함수
-    def star_layer(ind: int, cx: float, cy: float, delay: int, color: list):
-        appear = min(delay + 6, op - 1)
-        fade   = min(delay + 22, op)
-        opa_kf = [
-            kf(max(0, delay-1), [0],   [100]),
-            kf(appear,          [100], [100]),
-            kf(fade - 4,        [100], [0]),
-            {"t": fade, "s": [0]},
-        ]
-        scl_kf = [
-            kf(max(0, delay-1), [0,  0,  100], [120, 120, 100]),
-            kf(appear,          [120,120,100], [80,  80,  100]),
-            kf(appear + 4,      [80, 80, 100], [100, 100, 100]),
-            {"t": op, "s": [0, 0, 100]},
-        ]
-        lyr = layer_base(ind, f"star{ind}", op, px=cx, py=cy,
-                         scale_kf=scl_kf, opacity_kf=opa_kf)
-        lyr["shapes"] = [
-            shape_group("star", [
-                path_shape(star_path(0, 0, 9, 4, 5)),
-                fill_shape(color),
-            ])
-        ]
-        return lyr
-
-    stars = [
-        star_layer(10,  55,  45,  0,  STAR_YELLOW),
-        star_layer(11, 152,  38,  8,  STAR_YELLOW),
-        star_layer(12, 165,  85, 16,  STAR_PINK),
-        star_layer(13,  38,  82, 22,  STAR_YELLOW),
-        star_layer(14, 100,  20,  4,  STAR_PINK),
-    ]
-
-    tail   = layer_base(1, "tail",    op, px=148, py=106, rot_kf=tail_rot)
-    tail["shapes"] = tail_shapes()
-
-    body   = layer_base(2, "body",    op, pos_kf=jump_pos(112))
-    body["shapes"] = body_shapes()
-
-    legs   = layer_base(3, "legs",    op, pos_kf=jump_pos(128))
-    legs["shapes"] = leg_shapes()
-
-    ears   = layer_base(4, "ears",    op, pos_kf=jump_pos(68))
-    ears["shapes"] = ear_shapes()
-
-    head   = layer_base(5, "head",    op, pos_kf=jump_pos(68))
-    head["shapes"] = head_shapes()
-
-    eyes   = layer_base(6, "eyes",    op, pos_kf=jump_pos(68))
-    eyes["shapes"] = face_shapes(eye_squint=True)
-
-    tongue = layer_base(7, "tongue",  op, pos_kf=jump_pos(78))
-    tongue["shapes"] = tongue_shapes()
-
-    bg = bg_circle_layer(99, op, BG_CELEBRATE)
-    return lottie_doc("puppy_celebrate", 30, op,
-                      stars + [tongue, tail, body, legs, ears, head, eyes, bg])
-
-
-# ---------------------------------------------------------------------------
-# 엔트리포인트
-# ---------------------------------------------------------------------------
+    # 앞서 배치된 레이어들을 ind 숫자에 맞춰 정렬 (낮을수록 위로 렌더링하도록 의도했으나, 
+    # Lottie는 배열 아래로 갈수록 상단에 렌더링되므로, 순서를 반대로 정렬하거나 인덱스를 역순으로 설정)
+    # Lottie Docs: 배열의 뒤쪽 요소일수록 나중에 그려짐 => 위에 보임.
+    # 우리의 레이어 인덱스: Shadow 20, Tail 15, Legs 12, Body 10, Collar 9, Head 8, Ears 7, Face 5, BG 99
+    # => 큰 인덱스부터 정렬 (역순) 하면 작은 값이 배열 뒤쪽으로 가므로, Face(5)가 맨 마지막 => 맨 위에 렌더링됨!
+    layers.sort(key=lambda x: x["ind"], reverse=True)
+    
+    fname = f"puppy_{anim_type}" 
+    if anim_type == "sleeping": fname = "Puppy sleeping" # 예외처리 원본 유지용
+    return lottie_doc(fname, 30, op, layers)
 
 def main():
-    parser = argparse.ArgumentParser(description="상태별 강아지 Lottie JSON 생성")
-    parser.add_argument("--out-dir", default="data", help="출력 폴더 (기본: data/)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out-dir", default="data")
     args = parser.parse_args()
-
+    
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-
-    makers = {
-        "puppy_idle.json":      make_idle,
-        "puppy_working.json":   make_working,
-        "puppy_alert.json":     make_alert,
-        "puppy_celebrate.json": make_celebrate,
-    }
-
-    for fname, fn in makers.items():
-        doc = fn()
+    
+    scenes = [
+        ("puppy_idle.json",      90,  "idle"),
+        ("puppy_working.json",   60,  "working"),
+        ("puppy_alert.json",     45,  "alert"),
+        ("puppy_celebrate.json", 75,  "celebrate"),
+        ("Puppy sleeping.json",  120, "sleeping")
+    ]
+    
+    for fname, op, atype in scenes:
+        doc = make_dog_scene(fname, op, globals()[f"BG_{atype.upper()}"], atype)
         path = out / fname
         path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[OK] {path}  ({doc['op']}프레임 @ {doc['fr']}fps)")
+        print(f"[OK] {path}  ({doc['op']}프레임)")
 
     print("\n완료! 실행: python desktop-app/launch.py --lottie")
-
 
 if __name__ == "__main__":
     main()
